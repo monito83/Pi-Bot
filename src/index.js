@@ -2,7 +2,26 @@ const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Rout
 const { Pool } = require('pg');
 const cron = require('node-cron');
 const axios = require('axios');
+const express = require('express');
 require('dotenv').config();
+
+// Crear servidor Express para healthcheck
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Endpoint de health
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    bot: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`🌐 Healthcheck server running on port ${PORT}`);
+});
 
 // Configuración
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
