@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "src/index.js"
+    }
+  ],
+  "env": {
+    "DISCORD_BOT_TOKEN": "@discord_bot_token",
+    "DISCORD_CLIENT_ID": "@discord_client_id",
+    "DISCORD_GUILD_ID": "@discord_guild_id",
+    "SUPABASE_URL": "@supabase_url",
+    "SUPABASE_ANON_KEY": "@supabase_anon_key",
+    "SUPABASE_SERVICE_ROLE_KEY": "@supabase_service_role_key",
+    "MAGIC_EDEN_API_KEY": "@magic_eden_api_key",
+    "MONAD_RPC_URL": "@monad_rpc_url"
+  }
+}
+
