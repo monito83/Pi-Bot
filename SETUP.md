@@ -120,3 +120,5 @@ Si tienes problemas:
 3. Asegúrate de que todas las APIs estén funcionando
 4. Consulta la documentación de Discord.js y Supabase
 
+
+

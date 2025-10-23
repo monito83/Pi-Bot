@@ -98,3 +98,5 @@ LEFT JOIN price_history ph ON p.id = ph.project_id
 GROUP BY p.id, p.name, p.contract_address, p.marketplace, p.status, 
          p.last_floor_price, p.last_volume, p.last_sales_count, 
          p.last_listings_count, p.last_update;
+
+

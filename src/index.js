@@ -363,13 +363,10 @@ async function handleStatusCommand(interaction) {
   const projectName = interaction.options.getString('project');
 
   try {
-    const { data: project, error } = await supabase
-      .from('nft_projects')
-      .select('*')
-      .eq('name', projectName)
-      .single();
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
 
-    if (error || !project) {
+    if (!project) {
       await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
       return;
     }
@@ -397,16 +394,8 @@ async function handleStatusCommand(interaction) {
 // Manejar comando projects
 async function handleProjectsCommand(interaction) {
   try {
-    const { data: projects, error } = await supabase
-      .from('nft_projects')
-      .select('*')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      await interaction.reply({ content: '❌ Error al obtener proyectos.', ephemeral: true });
-      return;
-    }
+    const result = await pool.query('SELECT * FROM nft_projects WHERE status = $1 ORDER BY created_at DESC', ['active']);
+    const projects = result.rows;
 
     if (!projects.length) {
       await interaction.reply({ content: '📋 No hay proyectos configurados.', ephemeral: true });
