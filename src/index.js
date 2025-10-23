@@ -108,6 +108,10 @@ const commands = [
         )),
 
   new SlashCommandBuilder()
+    .setName('test-api')
+    .setDescription('Probar la API de Magic Eden'),
+
+  new SlashCommandBuilder()
     .setName('alerts')
     .setDescription('Gestionar alertas')
     .addSubcommand(subcommand =>
@@ -483,6 +487,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'volume':
         await handleVolumeCommand(interaction);
         break;
+      case 'test-api':
+        await handleTestApiCommand(interaction);
+        break;
       case 'alerts':
         await handleAlertsCommand(interaction);
         break;
@@ -561,6 +568,109 @@ async function handleStatusCommand(interaction) {
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleStatusCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar comando test-api
+async function handleTestApiCommand(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🔍 Testing Magic Eden API')
+      .setDescription('Probando conexión con Magic Eden API...')
+      .setColor('#FFA500')
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [embed] });
+    
+    // Test Ethereum (Moriusa)
+    const moriusaContract = '0xa8edf6c9ac6bf1a00afaaca6e0ca705b89192fb9';
+    const ethereumUrl = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${moriusaContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+    
+    console.log(`🔍 Testing Ethereum API: ${ethereumUrl}`);
+    
+    let ethereumResult = '❌ Failed';
+    try {
+      const response = await axios.get(ethereumUrl, {
+        headers: {
+          'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Discord-Bot/1.0'
+        },
+        timeout: 15000
+      });
+      
+      if (response.status === 200) {
+        ethereumResult = `✅ Success (${response.data.collections?.length || 0} collections)`;
+        if (response.data.collections && response.data.collections.length > 0) {
+          const moriusa = response.data.collections.find(col => 
+            col.primaryContract === moriusaContract ||
+            col.name.toLowerCase().includes('moriusa')
+          );
+          if (moriusa) {
+            ethereumResult += `\n🎯 Found: ${moriusa.name} - Floor: ${moriusa.floorAsk?.price?.amount?.decimal || 'N/A'}`;
+          }
+        }
+      } else {
+        ethereumResult = `❌ Status: ${response.status}`;
+      }
+    } catch (error) {
+      ethereumResult = `❌ Error: ${error.response?.status || error.message}`;
+    }
+    
+    // Test Monad Testnet (Momo)
+    const momoContract = '0xbc8f6824fde979848ad97a52bced2d6ca1842a68';
+    const monadUrl = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${momoContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+    
+    console.log(`🔍 Testing Monad API: ${monadUrl}`);
+    
+    let monadResult = '❌ Failed';
+    try {
+      const response = await axios.get(monadUrl, {
+        headers: {
+          'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Discord-Bot/1.0'
+        },
+        timeout: 15000
+      });
+      
+      if (response.status === 200) {
+        monadResult = `✅ Success (${response.data.collections?.length || 0} collections)`;
+        if (response.data.collections && response.data.collections.length > 0) {
+          const momo = response.data.collections.find(col => 
+            col.primaryContract === momoContract ||
+            col.name.toLowerCase().includes('momo')
+          );
+          if (momo) {
+            monadResult += `\n🎯 Found: ${momo.name} - Floor: ${momo.floorAsk?.price?.amount?.decimal || 'N/A'}`;
+          }
+        }
+      } else {
+        monadResult = `❌ Status: ${response.status}`;
+      }
+    } catch (error) {
+      monadResult = `❌ Error: ${error.response?.status || error.message}`;
+    }
+    
+    // Update embed with results
+    const resultEmbed = new EmbedBuilder()
+      .setTitle('🔍 Magic Eden API Test Results')
+      .addFields(
+        { name: '🌐 Ethereum API', value: ethereumResult, inline: false },
+        { name: '🔗 Monad Testnet API', value: monadResult, inline: false }
+      )
+      .setColor('#7C3AED')
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [resultEmbed] });
+    
+  } catch (error) {
+    console.error('Error in handleTestApiCommand:', error);
     await interaction.editReply({ content: '❌ Error interno.' });
   }
 }

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Eden API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Magic Eden API Test</h1>
+    
+    <button onclick="testEthereum()">Test Ethereum (Moriusa)</button>
+    <button onclick="testMonad()">Test Monad Testnet (Momo)</button>
+    <button onclick="clearResults()">Clear Results</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const API_KEY = '47940613-7b2f-42e1-bacf-8e85405e2b27';
+        
+        function addResult(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `result ${type}`;
+            div.innerHTML = message;
+            document.getElementById('results').appendChild(div);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+        
+        async function testEthereum() {
+            const moriusaContract = '0xa8edf6c9ac6bf1a00afaaca6e0ca705b89192fb9';
+            
+            addResult('🔍 Testing Ethereum API...', 'info');
+            
+            try {
+                const url = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${moriusaContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+                
+                addResult(`🔗 URL: ${url}`, 'info');
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Browser-Test/1.0'
+                    }
+                });
+                
+                addResult(`📊 Status: ${response.status}`, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addResult(`✅ Success! Collections found: ${data.collections?.length || 0}`, 'success');
+                    
+                    if (data.collections && data.collections.length > 0) {
+                        const moriusa = data.collections.find(col => 
+                            col.primaryContract === moriusaContract ||
+                            col.name.toLowerCase().includes('moriusa') ||
+                            col.symbol.toLowerCase().includes('moriusa')
+                        );
+                        
+                        if (moriusa) {
+                            addResult(`🎯 Found Moriusa: ${moriusa.name} (${moriusa.symbol})`, 'success');
+                            addResult(`💰 Floor Price: ${moriusa.floorAsk?.price?.amount?.decimal || 'N/A'}`, 'success');
+                            addResult(`📊 Volume 24h: ${moriusa.volume?.["1day"] || 'N/A'}`, 'success');
+                        } else {
+                            addResult('❌ Moriusa not found in collections', 'error');
+                        }
+                    }
+                } else {
+                    const errorText = await response.text();
+                    addResult(`❌ Error: ${response.status} - ${errorText}`, 'error');
+                }
+                
+            } catch (error) {
+                addResult(`❌ Fetch error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testMonad() {
+            const momoContract = '0xbc8f6824fde979848ad97a52bced2d6ca1842a68';
+            
+            addResult('🔍 Testing Monad Testnet API...', 'info');
+            
+            try {
+                const url = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${momoContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+                
+                addResult(`🔗 URL: ${url}`, 'info');
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Browser-Test/1.0'
+                    }
+                });
+                
+                addResult(`📊 Status: ${response.status}`, response.ok ? 'success' : 'error');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    addResult(`✅ Success! Collections found: ${data.collections?.length || 0}`, 'success');
+                    
+                    if (data.collections && data.collections.length > 0) {
+                        const momo = data.collections.find(col => 
+                            col.primaryContract === momoContract ||
+                            col.name.toLowerCase().includes('momo') ||
+                            col.symbol.toLowerCase().includes('momo')
+                        );
+                        
+                        if (momo) {
+                            addResult(`🎯 Found Momo: ${momo.name} (${momo.symbol})`, 'success');
+                            addResult(`💰 Floor Price: ${momo.floorAsk?.price?.amount?.decimal || 'N/A'}`, 'success');
+                            addResult(`📊 Volume 24h: ${momo.volume?.["1day"] || 'N/A'}`, 'success');
+                        } else {
+                            addResult('❌ Momo not found in collections', 'error');
+                        }
+                    }
+                } else {
+                    const errorText = await response.text();
+                    addResult(`❌ Error: ${response.status} - ${errorText}`, 'error');
+                }
+                
+            } catch (error) {
+                addResult(`❌ Fetch error: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>
