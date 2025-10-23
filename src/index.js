@@ -230,39 +230,119 @@ async function trackProject(project) {
   }
 }
 
-// Obtener datos del proyecto desde Magic Eden API
+// Obtener datos del proyecto desde múltiples APIs
 async function getProjectData(contractAddress) {
-  try {
-    // Magic Eden API para Ethereum (si existe) o Solana
-    const response = await axios.get(`https://api-mainnet.magiceden.io/v2/collections/${contractAddress}/stats`, {
-      headers: {
-        'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000
-    });
+  console.log(`🔍 Fetching data for contract: ${contractAddress}`);
+  
+  // Intentar diferentes APIs según el marketplace
+  const apis = [
+    () => getMagicEdenData(contractAddress),
+    () => getOpenSeaData(contractAddress),
+    () => getMonadData(contractAddress)
+  ];
 
-    if (response.data) {
-      return {
-        floor_price: response.data.floorPrice || 0,
-        volume_24h: response.data.volume24h || 0,
-        sales_count: response.data.listedCount || 0,
-        listings_count: response.data.listedCount || 0,
-        avg_sale_price: response.data.avgPrice24h || 0
-      };
+  for (const api of apis) {
+    try {
+      const data = await api();
+      if (data && data.floor_price > 0) {
+        console.log(`✅ Data found via API:`, data);
+        return data;
+      }
+    } catch (error) {
+      console.log(`❌ API failed:`, error.message);
     }
-  } catch (error) {
-    console.log(`Magic Eden API error for ${contractAddress}:`, error.message);
+  }
+
+  // Fallback: datos simulados para testing
+  console.log(`⚠️ No real data found, using simulated data`);
+  return {
+    floor_price: Math.random() * 0.5 + 0.1,
+    volume_24h: Math.random() * 10 + 1,
+    sales_count: Math.floor(Math.random() * 20) + 1,
+    listings_count: Math.floor(Math.random() * 100) + 10,
+    avg_sale_price: Math.random() * 0.6 + 0.2
+  };
+}
+
+// Magic Eden API (Ethereum + Monad Testnet)
+async function getMagicEdenData(contractAddress) {
+  try {
+    // Intentar diferentes endpoints según la red
+    const endpoints = [
+      // Endpoint para colecciones de Ethereum
+      `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/${contractAddress}/stats`,
+      // Endpoint para colecciones de Monad Testnet
+      `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/${contractAddress}/stats`
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`🔍 Trying Magic Eden endpoint: ${endpoint}`);
+        
+        const response = await axios.get(endpoint, {
+          headers: {
+            'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': 'Discord-Bot/1.0'
+          },
+          timeout: 5000
+        });
+
+        if (response.data) {
+          console.log(`✅ Magic Eden data found:`, response.data);
+          
+          return {
+            floor_price: response.data.floorAskPrice?.amount?.decimal || 0,
+            volume_24h: response.data.volume24h || 0,
+            sales_count: response.data.salesCount24h || 0,
+            listings_count: response.data.tokenCount || 0,
+            avg_sale_price: response.data.avgPrice24h || 0,
+            source: 'Magic Eden'
+          };
+        }
+      } catch (error) {
+        console.log(`❌ Magic Eden endpoint failed: ${endpoint}`, error.message);
+        continue;
+      }
+    }
     
-    // Fallback: datos simulados para testing
+    return null;
+  } catch (error) {
+    console.log(`❌ Magic Eden API error:`, error.message);
+    return null;
+  }
+}
+
+// OpenSea API (Ethereum)
+async function getOpenSeaData(contractAddress) {
+  const response = await axios.get(`https://api.opensea.io/api/v1/collection/${contractAddress}/stats`, {
+    headers: {
+      'X-API-KEY': process.env.OPENSEA_API_KEY || '',
+      'Content-Type': 'application/json'
+    },
+    timeout: 5000
+  });
+
+  if (response.data && response.data.stats) {
+    const stats = response.data.stats;
     return {
-      floor_price: Math.random() * 0.5 + 0.1,
-      volume_24h: Math.random() * 10 + 1,
-      sales_count: Math.floor(Math.random() * 20) + 1,
-      listings_count: Math.floor(Math.random() * 100) + 10,
-      avg_sale_price: Math.random() * 0.6 + 0.2
+      floor_price: parseFloat(stats.floor_price) || 0,
+      volume_24h: parseFloat(stats.one_day_volume) || 0,
+      sales_count: parseInt(stats.one_day_sales) || 0,
+      listings_count: parseInt(stats.count) || 0,
+      avg_sale_price: parseFloat(stats.average_price) || 0,
+      source: 'OpenSea'
     };
   }
+}
+
+// Monad RPC (para proyectos de Monad Testnet/Mainnet)
+async function getMonadData(contractAddress) {
+  // TODO: Implementar integración con Monad RPC
+  // Por ahora retornamos null para que use otras APIs
+  console.log(`🔍 Monad RPC not implemented yet for ${contractAddress}`);
+  return null;
 }
 
 // Verificar alertas
@@ -404,23 +484,28 @@ async function handleStatusCommand(interaction) {
       return;
     }
 
+    // Obtener datos frescos de la API
+    await interaction.deferReply();
+    const projectData = await getProjectData(project.contract_address);
+
     const embed = new EmbedBuilder()
       .setTitle(`📊 ${project.name} - Status`)
       .addFields(
-        { name: 'Floor Price', value: `${project.last_floor_price || 'N/A'} ETH`, inline: true },
-        { name: 'Volume 24h', value: `${project.last_volume || 'N/A'} ETH`, inline: true },
-        { name: 'Sales Count', value: `${project.last_sales_count || 'N/A'}`, inline: true },
-        { name: 'Listings', value: `${project.last_listings_count || 'N/A'}`, inline: true },
-        { name: 'Last Update', value: project.last_update ? new Date(project.last_update).toLocaleString() : 'N/A', inline: true },
+        { name: 'Floor Price', value: `${projectData.floor_price || 'N/A'} ETH`, inline: true },
+        { name: 'Volume 24h', value: `${projectData.volume_24h || 'N/A'} ETH`, inline: true },
+        { name: 'Sales Count', value: `${projectData.sales_count || 'N/A'}`, inline: true },
+        { name: 'Listings', value: `${projectData.listings_count || 'N/A'}`, inline: true },
+        { name: 'Contract', value: `${project.contract_address.slice(0, 10)}...`, inline: true },
         { name: 'Status', value: project.status, inline: true }
       )
+      .setFooter({ text: `Data source: ${projectData?.source || 'Simulated'}` })
       .setColor('#7C3AED')
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleStatusCommand:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
 
