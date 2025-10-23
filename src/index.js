@@ -175,7 +175,30 @@ const commands = [
           option.setName('project')
             .setDescription('Nombre del proyecto')
             .setRequired(true)
-            .setAutocomplete(true))),
+            .setAutocomplete(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Eliminar una alerta específica')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto')
+            .setRequired(true)
+            .setAutocomplete(true))
+        .addStringOption(option =>
+          option.setName('alert_type')
+            .setDescription('Tipo de alerta a eliminar')
+            .setRequired(true)
+            .addChoices(
+              { name: 'Floor Price Change', value: 'floor_change' },
+              { name: 'Floor Price Above', value: 'floor_above' },
+              { name: 'Floor Price Below', value: 'floor_below' },
+              { name: 'Volume Change', value: 'volume_change' },
+              { name: 'Volume Above', value: 'volume_above' },
+              { name: 'Volume Below', value: 'volume_below' },
+              { name: 'Sales Count Change', value: 'sales_change' },
+              { name: 'Listings Count Change', value: 'listings_change' }
+            ))),
 
   new SlashCommandBuilder()
     .setName('delete')
@@ -1335,6 +1358,9 @@ async function handleAlertsCommand(interaction) {
     case 'disable':
       await handleAlertsDisable(interaction);
       break;
+    case 'remove':
+      await handleAlertsRemove(interaction);
+      break;
   }
 }
 
@@ -1376,10 +1402,31 @@ async function handleAlertsSetup(interaction) {
     );
 
     if (existingAlert.rows.length > 0) {
-      // Actualizar alerta existente
+      // Actualizar alerta existente - agregar nueva configuración al array existente
+      const existingConfigs = JSON.parse(existingAlert.rows[0].alert_types || '[]');
+      
+      // Verificar si ya existe una configuración similar
+      const similarConfig = existingConfigs.find(config => 
+        config.type === alertConfig.type && 
+        config.threshold_type === alertConfig.threshold_type &&
+        config.threshold_value === alertConfig.threshold_value &&
+        config.timeframe === alertConfig.timeframe
+      );
+      
+      if (similarConfig) {
+        await interaction.reply({ 
+          content: '⚠️ Ya tienes una alerta idéntica configurada para este proyecto.', 
+          flags: 64 
+        });
+        return;
+      }
+      
+      // Agregar nueva configuración al array existente
+      existingConfigs.push(alertConfig);
+      
       await pool.query(
-        'UPDATE user_alerts SET alert_types = $1, floor_threshold = $2, volume_threshold = $3, is_active = $4, updated_at = NOW() WHERE discord_user_id = $5 AND project_id = $6',
-        [JSON.stringify([alertConfig]), thresholdValue, thresholdValue, true, interaction.user.id, project.id]
+        'UPDATE user_alerts SET alert_types = $1, updated_at = NOW() WHERE discord_user_id = $2 AND project_id = $3',
+        [JSON.stringify(existingConfigs), interaction.user.id, project.id]
       );
     } else {
       // Insertar nueva alerta
@@ -1404,6 +1451,69 @@ async function handleAlertsSetup(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleAlertsSetup:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Manejar eliminación de alerta específica
+async function handleAlertsRemove(interaction) {
+  const projectName = interaction.options.getString('project');
+  const alertType = interaction.options.getString('alert_type');
+
+  try {
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.reply({ content: '❌ Proyecto no encontrado.', flags: 64 });
+      return;
+    }
+
+    const alertResult = await pool.query(
+      'SELECT * FROM user_alerts WHERE discord_user_id = $1 AND project_id = $2',
+      [interaction.user.id, project.id]
+    );
+
+    if (alertResult.rows.length === 0) {
+      await interaction.reply({ content: '❌ No tienes alertas configuradas para este proyecto.', flags: 64 });
+      return;
+    }
+
+    const alert = alertResult.rows[0];
+    const alertConfigs = JSON.parse(alert.alert_types || '[]');
+    
+    // Filtrar la configuración específica
+    const filteredConfigs = alertConfigs.filter(config => config.type !== alertType);
+    
+    if (filteredConfigs.length === alertConfigs.length) {
+      await interaction.reply({ 
+        content: `❌ No tienes una alerta de tipo "${getAlertTypeName(alertType)}" configurada para este proyecto.`, 
+        flags: 64 
+      });
+      return;
+    }
+
+    if (filteredConfigs.length === 0) {
+      // Si no quedan configuraciones, eliminar toda la alerta
+      await pool.query(
+        'DELETE FROM user_alerts WHERE discord_user_id = $1 AND project_id = $2',
+        [interaction.user.id, project.id]
+      );
+      await interaction.reply({ 
+        content: `✅ Alerta "${getAlertTypeName(alertType)}" eliminada de **${projectName}**. No quedan más alertas para este proyecto.` 
+      });
+    } else {
+      // Actualizar con las configuraciones restantes
+      await pool.query(
+        'UPDATE user_alerts SET alert_types = $1, updated_at = NOW() WHERE discord_user_id = $2 AND project_id = $3',
+        [JSON.stringify(filteredConfigs), interaction.user.id, project.id]
+      );
+      await interaction.reply({ 
+        content: `✅ Alerta "${getAlertTypeName(alertType)}" eliminada de **${projectName}**. Te quedan ${filteredConfigs.length} alertas más.` 
+      });
+    }
+  } catch (error) {
+    console.error('Error in handleAlertsRemove:', error);
     await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
