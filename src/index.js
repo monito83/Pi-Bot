@@ -743,7 +743,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
-    await interaction.reply({ content: '❌ Error interno. Intenta de nuevo.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error interno. Intenta de nuevo.', flags: 64 });
   }
 });
 
@@ -848,7 +848,7 @@ async function handleStatusCommand(interaction) {
     const project = result.rows[0];
 
     if (!project) {
-      await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
+      await interaction.reply({ content: '❌ Proyecto no encontrado.', flags: 64 });
       return;
     }
 
@@ -1033,7 +1033,7 @@ async function handleProjectsCommand(interaction) {
     const projects = result.rows;
 
     if (!projects.length) {
-      await interaction.reply({ content: '📋 No hay proyectos configurados.', ephemeral: true });
+      await interaction.reply({ content: '📋 No hay proyectos configurados.', flags: 64 });
       return;
     }
 
@@ -1059,7 +1059,7 @@ async function handleProjectsCommand(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleProjectsCommand:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
@@ -1073,7 +1073,7 @@ async function handleFloorCommand(interaction) {
     const project = result.rows[0];
 
     if (!project) {
-      await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
+      await interaction.reply({ content: '❌ Proyecto no encontrado.', flags: 64 });
       return;
     }
 
@@ -1144,7 +1144,7 @@ async function handleVolumeCommand(interaction) {
     const project = result.rows[0];
 
     if (!project) {
-      await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
+      await interaction.reply({ content: '❌ Proyecto no encontrado.', flags: 64 });
       return;
     }
 
@@ -1234,7 +1234,7 @@ async function handleAlertsSetup(interaction) {
     const project = result.rows[0];
 
     if (!project) {
-      await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
+      await interaction.reply({ content: '❌ Proyecto no encontrado.', flags: 64 });
       return;
     }
 
@@ -1246,10 +1246,25 @@ async function handleAlertsSetup(interaction) {
       enabled: true
     };
 
-    await pool.query(
-      'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (discord_user_id, project_id) DO UPDATE SET alert_types = EXCLUDED.alert_types, floor_threshold = EXCLUDED.floor_threshold, volume_threshold = EXCLUDED.volume_threshold, is_active = EXCLUDED.is_active, updated_at = NOW()',
-      [interaction.user.id, project.id, JSON.stringify([alertConfig]), threshold, threshold, true]
+    // Verificar si ya existe una alerta para este usuario y proyecto
+    const existingAlert = await pool.query(
+      'SELECT * FROM user_alerts WHERE discord_user_id = $1 AND project_id = $2',
+      [interaction.user.id, project.id]
     );
+
+    if (existingAlert.rows.length > 0) {
+      // Actualizar alerta existente
+      await pool.query(
+        'UPDATE user_alerts SET alert_types = $1, floor_threshold = $2, volume_threshold = $3, is_active = $4, updated_at = NOW() WHERE discord_user_id = $5 AND project_id = $6',
+        [JSON.stringify([alertConfig]), threshold, threshold, true, interaction.user.id, project.id]
+      );
+    } else {
+      // Insertar nueva alerta
+      await pool.query(
+        'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
+        [interaction.user.id, project.id, JSON.stringify([alertConfig]), threshold, threshold, true]
+      );
+    }
 
     const embed = new EmbedBuilder()
       .setTitle('✅ Alerta Configurada')
@@ -1265,7 +1280,7 @@ async function handleAlertsSetup(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleAlertsSetup:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
@@ -1300,7 +1315,7 @@ async function handleAlertsList(interaction) {
     const alerts = result.rows;
 
     if (!alerts.length) {
-      await interaction.reply({ content: '📋 No tienes alertas configuradas.', ephemeral: true });
+      await interaction.reply({ content: '📋 No tienes alertas configuradas.', flags: 64 });
       return;
     }
 
@@ -1322,7 +1337,7 @@ async function handleAlertsList(interaction) {
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleAlertsList:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
@@ -1337,14 +1352,14 @@ async function handleAlertsDisable(interaction) {
     );
 
     if (result.rowCount === 0) {
-      await interaction.reply({ content: '❌ No se encontraron alertas para desactivar.', ephemeral: true });
+      await interaction.reply({ content: '❌ No se encontraron alertas para desactivar.', flags: 64 });
       return;
     }
 
-    await interaction.reply({ content: `✅ Alertas desactivadas para **${projectName}**`, ephemeral: true });
+    await interaction.reply({ content: `✅ Alertas desactivadas para **${projectName}**`, flags: 64 });
   } catch (error) {
     console.error('Error in handleAlertsDisable:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
