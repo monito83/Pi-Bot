@@ -264,15 +264,15 @@ async function getProjectData(contractAddress) {
   };
 }
 
-// Magic Eden API (Ethereum + Monad Testnet)
+// Magic Eden API (Ethereum + Monad Testnet) - CORRECT ENDPOINTS
 async function getMagicEdenData(contractAddress) {
   try {
     // Intentar diferentes endpoints según la red
     const endpoints = [
-      // Endpoint para colecciones de Ethereum
-      `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/${contractAddress}/stats`,
-      // Endpoint para colecciones de Monad Testnet
-      `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/${contractAddress}/stats`
+      // Endpoint correcto para colecciones de Ethereum (v7 con id)
+      `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
+      // Endpoint correcto para colecciones de Monad Testnet (v7 con id)
+      `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`
     ];
 
     for (const endpoint of endpoints) {
@@ -286,23 +286,73 @@ async function getMagicEdenData(contractAddress) {
             'Content-Type': 'application/json',
             'User-Agent': 'Discord-Bot/1.0'
           },
-          timeout: 5000
+          timeout: 10000
         });
 
         if (response.data) {
           console.log(`✅ Magic Eden data found:`, response.data);
           
-          return {
-            floor_price: response.data.floorAskPrice?.amount?.decimal || 0,
-            volume_24h: response.data.volume24h || 0,
-            sales_count: response.data.salesCount24h || 0,
-            listings_count: response.data.tokenCount || 0,
-            avg_sale_price: response.data.avgPrice24h || 0,
-            source: 'Magic Eden'
-          };
+          // Para API v3, buscar la colección específica en el array
+          let collection = null;
+          
+          if (response.data.collections && Array.isArray(response.data.collections)) {
+            console.log(`Searching in ${response.data.collections.length} collections...`);
+            
+            // Buscar la colección por múltiples criterios
+            collection = response.data.collections.find(col => {
+              const matches = 
+                col.id === contractAddress ||
+                col.primaryContract === contractAddress ||
+                col.symbol === contractAddress ||
+                col.slug === contractAddress ||
+                col.name.toLowerCase().includes(contractAddress.toLowerCase()) ||
+                (col.primaryContract && col.primaryContract.toLowerCase() === contractAddress.toLowerCase()) ||
+                (col.symbol && col.symbol.toLowerCase() === contractAddress.toLowerCase());
+              
+              if (matches) {
+                console.log(`Found potential match: ${col.name} (${col.symbol}) - Contract: ${col.primaryContract}`);
+              }
+              
+              return matches;
+            });
+          }
+          
+          // Si no encontramos la colección específica, no usar ninguna (evitar datos incorrectos)
+          if (!collection) {
+            console.log(`Collection with identifier ${contractAddress} not found in Magic Eden v3`);
+            return null;
+          }
+          
+          if (collection) {
+            console.log(`Found collection: ${collection.name} (${collection.symbol})`);
+            
+            // Extraer datos de precios de la estructura v3
+            const floorAsk = collection.floorAsk;
+            const volume = collection.volume;
+            
+            // Obtener precio
+            const priceInETH = floorAsk?.price?.amount?.decimal || 0;
+            
+            // Obtener top bid si está disponible
+            const topBid = collection.topBid?.price?.amount?.decimal || 0;
+            
+            return {
+              floor_price: priceInETH,
+              volume_24h: volume?.["1day"] || 0,
+              sales_count: collection.salesCount || 0,
+              listings_count: collection.onSaleCount || 0,
+              avg_sale_price: collection.avgPrice || 0,
+              top_bid: topBid,
+              source: 'Magic Eden'
+            };
+          }
         }
       } catch (error) {
         console.log(`❌ Magic Eden endpoint failed: ${endpoint}`, error.message);
+        if (error.response) {
+          console.log(`❌ Response status: ${error.response.status}`);
+          console.log(`❌ Response data:`, error.response.data);
+        }
         continue;
       }
     }
