@@ -274,16 +274,22 @@ async function getMagicEdenData(contractAddress) {
     // Intentar diferentes endpoints según la red
     const endpoints = [
       // Endpoint correcto para colecciones de Ethereum (v7 con id)
-      `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
+      {
+        url: `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
+        chain: 'ethereum'
+      },
       // Endpoint correcto para colecciones de Monad Testnet (v7 con id)
-      `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`
+      {
+        url: `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
+        chain: 'monad-testnet'
+      }
     ];
 
     for (const endpoint of endpoints) {
       try {
-        console.log(`🔍 Trying Magic Eden endpoint: ${endpoint}`);
+        console.log(`🔍 Trying Magic Eden endpoint: ${endpoint.url}`);
         
-        const response = await axios.get(endpoint, {
+        const response = await axios.get(endpoint.url, {
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
@@ -323,7 +329,7 @@ async function getMagicEdenData(contractAddress) {
           // Si no encontramos la colección específica, no usar ninguna (evitar datos incorrectos)
           if (!collection) {
             console.log(`Collection with identifier ${contractAddress} not found in Magic Eden v3`);
-            return null;
+            continue;
           }
           
           if (collection) {
@@ -339,6 +345,11 @@ async function getMagicEdenData(contractAddress) {
             // Obtener top bid si está disponible
             const topBid = collection.topBid?.price?.amount?.decimal || 0;
             
+            // Determinar moneda y conversión USD
+            const isMonad = endpoint.chain === 'monad-testnet';
+            const currency = isMonad ? 'MON' : 'ETH';
+            const priceUSD = isMonad ? priceInETH * 0.02 : priceInETH * 3000; // MON testnet vs ETH
+            
             return {
               floor_price: priceInETH,
               volume_24h: volume?.["1day"] || 0,
@@ -346,12 +357,16 @@ async function getMagicEdenData(contractAddress) {
               listings_count: collection.onSaleCount || 0,
               avg_sale_price: collection.avgPrice || 0,
               top_bid: topBid,
-              source: 'Magic Eden'
+              source: 'Magic Eden',
+              currency: currency,
+              image: collection.image || null,
+              marketplace_url: `https://magiceden.io/${endpoint.chain}/collections/${collection.slug || collection.id}`,
+              price_usd: priceUSD
             };
           }
         }
       } catch (error) {
-        console.log(`❌ Magic Eden endpoint failed: ${endpoint}`, error.message);
+        console.log(`❌ Magic Eden endpoint failed: ${endpoint.url}`, error.message);
         if (error.response) {
           console.log(`❌ Response status: ${error.response.status}`);
           console.log(`❌ Response data:`, error.response.data);
@@ -550,19 +565,67 @@ async function handleStatusCommand(interaction) {
     await interaction.deferReply();
     const projectData = await getProjectData(project.contract_address);
 
+    // Crear embed con información mejorada
     const embed = new EmbedBuilder()
       .setTitle(`📊 ${project.name} - Status`)
-      .addFields(
-        { name: 'Floor Price', value: `${projectData.floor_price || 'N/A'} ETH`, inline: true },
-        { name: 'Volume 24h', value: `${projectData.volume_24h || 'N/A'} ETH`, inline: true },
-        { name: 'Sales Count', value: `${projectData.sales_count || 'N/A'}`, inline: true },
-        { name: 'Listings', value: `${projectData.listings_count || 'N/A'}`, inline: true },
-        { name: 'Contract', value: `${project.contract_address.slice(0, 10)}...`, inline: true },
-        { name: 'Status', value: project.status, inline: true }
-      )
-      .setFooter({ text: `Data source: ${projectData?.source || 'Simulated'}` })
       .setColor('#7C3AED')
       .setTimestamp();
+
+    // Agregar imagen si está disponible
+    if (projectData?.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    // Determinar moneda y formato de precios
+    const currency = projectData?.currency || 'ETH';
+    const floorPrice = projectData?.floor_price || 0;
+    const topBid = projectData?.top_bid || 0;
+    const priceUSD = projectData?.price_usd || 0;
+
+    // Campos principales
+    embed.addFields(
+      { 
+        name: '💰 Floor Price', 
+        value: `${floorPrice.toFixed(4)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        inline: true 
+      },
+      { 
+        name: '🎯 Top Bid', 
+        value: `${topBid.toFixed(4)} ${currency}\n($${(topBid * (currency === 'MON' ? 0.02 : 3000)).toFixed(2)} USD)`, 
+        inline: true 
+      },
+      { 
+        name: '📊 Volume 24h', 
+        value: `${(projectData?.volume_24h || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '🛒 Sales Count', 
+        value: `${projectData?.sales_count || 'N/A'}`, 
+        inline: true 
+      },
+      { 
+        name: '📋 Listings', 
+        value: `${projectData?.listings_count || 'N/A'}`, 
+        inline: true 
+      },
+      { 
+        name: '🔗 Contract', 
+        value: `${project.contract_address.slice(0, 10)}...`, 
+        inline: true 
+      }
+    );
+
+    // Agregar URL del marketplace si está disponible
+    if (projectData?.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[View on Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    embed.setFooter({ text: `Data source: ${projectData?.source || 'Simulated'} • Status: ${project.status}` });
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
@@ -718,20 +781,60 @@ async function handleFloorCommand(interaction) {
       return;
     }
 
+    // Obtener datos frescos de la API
+    await interaction.deferReply();
+    const projectData = await getProjectData(project.contract_address);
+
+    // Crear embed mejorado para floor price
     const embed = new EmbedBuilder()
       .setTitle(`💰 ${project.name} - Floor Price`)
       .setDescription(`Período: ${period}`)
-      .addFields(
-        { name: 'Current Floor', value: `${project.last_floor_price || 'N/A'} ETH`, inline: true },
-        { name: 'Last Update', value: project.last_update ? new Date(project.last_update).toLocaleString() : 'N/A', inline: true }
-      )
       .setColor('#10B981')
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    // Agregar imagen si está disponible
+    if (projectData?.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    // Determinar moneda y formato de precios
+    const currency = projectData?.currency || 'ETH';
+    const floorPrice = projectData?.floor_price || 0;
+    const priceUSD = projectData?.price_usd || 0;
+
+    embed.addFields(
+      { 
+        name: '💰 Floor Price', 
+        value: `${floorPrice.toFixed(4)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        inline: true 
+      },
+      { 
+        name: '📊 Volume 24h', 
+        value: `${(projectData?.volume_24h || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '⏰ Period', 
+        value: period || '24h', 
+        inline: true 
+      }
+    );
+
+    // Agregar URL del marketplace si está disponible
+    if (projectData?.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[View on Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    embed.setFooter({ text: `Data source: ${projectData?.source || 'Simulated'}` });
+
+    await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleFloorCommand:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
 
@@ -749,21 +852,60 @@ async function handleVolumeCommand(interaction) {
       return;
     }
 
+    // Obtener datos frescos de la API
+    await interaction.deferReply();
+    const projectData = await getProjectData(project.contract_address);
+
+    // Crear embed mejorado para volume
     const embed = new EmbedBuilder()
       .setTitle(`📊 ${project.name} - Volume`)
       .setDescription(`Período: ${period}`)
-      .addFields(
-        { name: 'Volume 24h', value: `${project.last_volume || 'N/A'} ETH`, inline: true },
-        { name: 'Sales Count', value: `${project.last_sales_count || 'N/A'}`, inline: true },
-        { name: 'Avg Sale Price', value: `${project.last_avg_sale_price || 'N/A'} ETH`, inline: true }
-      )
       .setColor('#F59E0B')
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    // Agregar imagen si está disponible
+    if (projectData?.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    // Determinar moneda y formato de precios
+    const currency = projectData?.currency || 'ETH';
+    const volume24h = projectData?.volume_24h || 0;
+    const avgSalePrice = projectData?.avg_sale_price || 0;
+
+    embed.addFields(
+      { 
+        name: '📊 Volume 24h', 
+        value: `${volume24h.toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '🛒 Sales Count', 
+        value: `${projectData?.sales_count || 'N/A'}`, 
+        inline: true 
+      },
+      { 
+        name: '💰 Avg Sale Price', 
+        value: `${avgSalePrice.toFixed(4)} ${currency}`, 
+        inline: true 
+      }
+    );
+
+    // Agregar URL del marketplace si está disponible
+    if (projectData?.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[View on Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    embed.setFooter({ text: `Data source: ${projectData?.source || 'Simulated'}` });
+
+    await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleVolumeCommand:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
 
