@@ -285,7 +285,6 @@ async function getMagicEdenData(contractAddress) {
         
         const response = await axios.get(endpoint, {
           headers: {
-            'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'User-Agent': 'Discord-Bot/1.0'
@@ -595,7 +594,6 @@ async function handleTestApiCommand(interaction) {
     try {
       const response = await axios.get(ethereumUrl, {
         headers: {
-          'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
           'Accept': 'application/json',
           'Content-Type': 'application/json',
           'User-Agent': 'Discord-Bot/1.0'
@@ -631,7 +629,6 @@ async function handleTestApiCommand(interaction) {
     try {
       const response = await axios.get(monadUrl, {
         headers: {
-          'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
           'Accept': 'application/json',
           'Content-Type': 'application/json',
           'User-Agent': 'Discord-Bot/1.0'
