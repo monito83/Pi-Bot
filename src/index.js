@@ -515,34 +515,20 @@ async function handleAlertsSetup(interaction) {
   const types = interaction.options.getString('types') || 'floor,volume';
 
   try {
-    const { data: project, error } = await supabase
-      .from('nft_projects')
-      .select('*')
-      .eq('name', projectName)
-      .single();
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
 
-    if (error || !project) {
+    if (!project) {
       await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
       return;
     }
 
     const alertTypes = types.split(',').map(t => t.trim());
 
-    const { error: insertError } = await supabase
-      .from('user_alerts')
-      .upsert({
-        discord_user_id: interaction.user.id,
-        project_id: project.id,
-        alert_types: alertTypes,
-        floor_threshold: 5.0, // 5% por defecto
-        volume_threshold: 10.0, // 10 ETH por defecto
-        is_active: true
-      });
-
-    if (insertError) {
-      await interaction.reply({ content: '❌ Error al configurar alertas.', ephemeral: true });
-      return;
-    }
+    await pool.query(
+      'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (discord_user_id, project_id) DO UPDATE SET alert_types = $3, floor_threshold = $4, volume_threshold = $5, is_active = $6',
+      [interaction.user.id, project.id, JSON.stringify(alertTypes), 5.0, 10.0, true]
+    );
 
     const embed = new EmbedBuilder()
       .setTitle('✅ Alertas Configuradas')
