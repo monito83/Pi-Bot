@@ -348,7 +348,20 @@ async function getMagicEdenData(contractAddress) {
             // Determinar moneda y conversión USD
             const isMonad = endpoint.chain === 'monad-testnet';
             const currency = isMonad ? 'MON' : 'ETH';
-            const priceUSD = isMonad ? priceInETH * 0.02 : priceInETH * 3000; // MON testnet vs ETH
+            
+            // Obtener precio real de ETH para conversión USD
+            let priceUSD = 0;
+            if (isMonad) {
+              priceUSD = priceInETH * 0.02; // MON testnet
+            } else {
+              try {
+                const ethPrice = await getETHPrice();
+                priceUSD = priceInETH * ethPrice;
+              } catch (error) {
+                console.error('Error getting ETH price for USD conversion:', error);
+                priceUSD = 0; // Mostrar 0 si no se puede obtener el precio
+              }
+            }
             
             return {
               floor_price: priceInETH,
@@ -586,12 +599,12 @@ async function handleStatusCommand(interaction) {
     embed.addFields(
       { 
         name: '💰 Floor Price', 
-        value: `${floorPrice.toFixed(4)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        value: `${floorPrice.toFixed(2)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
         inline: true 
       },
       { 
         name: '🎯 Top Bid', 
-        value: `${topBid.toFixed(4)} ${currency}\n($${(topBid * (currency === 'MON' ? 0.02 : 3000)).toFixed(2)} USD)`, 
+        value: `${topBid.toFixed(2)} ${currency}\n($${(topBid * (currency === 'MON' ? 0.02 : await getETHPrice())).toFixed(2)} USD)`, 
         inline: true 
       },
       { 
@@ -752,13 +765,18 @@ async function handleProjectsCommand(interaction) {
       .setColor('#7C3AED')
       .setTimestamp();
 
-    projects.forEach((project, index) => {
+    // Obtener datos frescos para cada proyecto para mostrar la moneda correcta
+    for (let i = 0; i < projects.length; i++) {
+      const project = projects[i];
+      const projectData = await getProjectData(project.contract_address);
+      const currency = projectData?.currency || 'ETH';
+      
       embed.addFields({
-        name: `${index + 1}. ${project.name}`,
-        value: `Floor: ${project.last_floor_price || 'N/A'} ETH\nVolume: ${project.last_volume || 'N/A'} ETH`,
+        name: `${i + 1}. ${project.name}`,
+        value: `Floor: ${project.last_floor_price || 'N/A'} ${currency}\nVolume: ${project.last_volume || 'N/A'} ${currency}`,
         inline: true
       });
-    });
+    }
 
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
@@ -805,7 +823,7 @@ async function handleFloorCommand(interaction) {
     embed.addFields(
       { 
         name: '💰 Floor Price', 
-        value: `${floorPrice.toFixed(4)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        value: `${floorPrice.toFixed(2)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
         inline: true 
       },
       { 
@@ -886,7 +904,7 @@ async function handleVolumeCommand(interaction) {
       },
       { 
         name: '💰 Avg Sale Price', 
-        value: `${avgSalePrice.toFixed(4)} ${currency}`, 
+        value: `${avgSalePrice.toFixed(2)} ${currency}`, 
         inline: true 
       }
     );
@@ -1021,6 +1039,27 @@ async function handleAlertsDisable(interaction) {
     console.error('Error in handleAlertsDisable:', error);
     await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
   }
+}
+
+// Obtener precio ETH desde CoinGecko
+async function getETHPrice() {
+  try {
+    const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
+      timeout: 5000
+    });
+    
+    if (response.data && response.data.ethereum && response.data.ethereum.usd) {
+      const ethPrice = response.data.ethereum.usd;
+      console.log(`💰 ETH price from CoinGecko: $${ethPrice}`);
+      return ethPrice;
+    }
+  } catch (error) {
+    console.error('Error fetching ETH price:', error.message);
+  }
+  
+  // Fallback si falla la API
+  console.log('⚠️ Using fallback ETH price: $3000');
+  return 3000;
 }
 
 // Iniciar bot
