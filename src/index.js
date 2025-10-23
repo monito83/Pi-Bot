@@ -230,7 +230,7 @@ async function trackProject(project) {
   }
 }
 
-// Obtener datos del proyecto desde múltiples APIs
+// Obtener datos del proyecto desde múltiples APIs con retry logic
 async function getProjectData(contractAddress) {
   console.log(`🔍 Fetching data for contract: ${contractAddress}`);
   
@@ -264,7 +264,7 @@ async function getProjectData(contractAddress) {
   };
 }
 
-// Magic Eden API (Ethereum + Monad Testnet) - CORRECT ENDPOINTS
+// Magic Eden API (Ethereum + Monad Testnet) - CORRECT ENDPOINTS WITH RETRY
 async function getMagicEdenData(contractAddress) {
   try {
     // Intentar diferentes endpoints según la red
@@ -286,7 +286,7 @@ async function getMagicEdenData(contractAddress) {
             'Content-Type': 'application/json',
             'User-Agent': 'Discord-Bot/1.0'
           },
-          timeout: 10000
+          timeout: 15000
         });
 
         if (response.data) {
@@ -352,6 +352,12 @@ async function getMagicEdenData(contractAddress) {
         if (error.response) {
           console.log(`❌ Response status: ${error.response.status}`);
           console.log(`❌ Response data:`, error.response.data);
+          
+          // Si es error 503, esperar un poco antes de continuar
+          if (error.response.status === 503) {
+            console.log(`⏳ Magic Eden API is down (503), waiting 2 seconds...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         }
         continue;
       }
