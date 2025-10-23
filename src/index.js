@@ -146,12 +146,19 @@ const commands = [
               { name: '7 días', value: '7d' },
               { name: '30 días', value: '30d' }
             ))
-        .addNumberOption(option =>
-          option.setName('threshold')
-            .setDescription('Umbral de cambio (%)')
+        .addStringOption(option =>
+          option.setName('threshold_type')
+            .setDescription('Tipo de umbral')
             .setRequired(false)
-            .setMinValue(1)
-            .setMaxValue(100)))
+            .addChoices(
+              { name: 'Porcentaje (%)', value: 'percentage' },
+              { name: 'Valor absoluto', value: 'absolute' }
+            ))
+        .addNumberOption(option =>
+          option.setName('threshold_value')
+            .setDescription('Valor del umbral')
+            .setRequired(false)
+            .setMinValue(0.01)))
     .addSubcommand(subcommand =>
       subcommand
         .setName('list')
@@ -250,11 +257,8 @@ async function trackProject(project) {
       sales_count: projectData.sales_count
     });
 
-    // Guardar en historial
-    await pool.query(
-      'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
-      [project.id, projectData.floor_price, projectData.volume_24h, projectData.sales_count, projectData.listings_count, projectData.avg_sale_price]
-    );
+    // Guardar en historial solo si hay cambios significativos
+    await savePriceHistoryIfChanged(project.id, projectData);
 
     // Actualizar proyecto
     await pool.query(
@@ -267,6 +271,51 @@ async function trackProject(project) {
 
   } catch (error) {
     console.error(`Error tracking project ${project.name}:`, error);
+  }
+}
+
+// Guardar historial solo si hay cambios significativos
+async function savePriceHistoryIfChanged(projectId, projectData) {
+  try {
+    // Obtener el último registro del historial
+    const lastRecord = await pool.query(
+      'SELECT * FROM price_history WHERE project_id = $1 ORDER BY recorded_at DESC LIMIT 1',
+      [projectId]
+    );
+
+    if (lastRecord.rows.length === 0) {
+      // No hay historial previo, guardar siempre
+      await pool.query(
+        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
+        [projectId, projectData.floor_price, projectData.volume_24h, projectData.sales_count, projectData.listings_count, projectData.avg_sale_price]
+      );
+      console.log(`📊 First price history entry for project ${projectId}`);
+      return;
+    }
+
+    const last = lastRecord.rows[0];
+    
+    // Calcular cambios porcentuales
+    const floorChange = last.floor_price > 0 ? Math.abs((projectData.floor_price - last.floor_price) / last.floor_price) * 100 : 0;
+    const volumeChange = last.volume_24h > 0 ? Math.abs((projectData.volume_24h - last.volume_24h) / last.volume_24h) * 100 : 0;
+    const salesChange = last.sales_count > 0 ? Math.abs((projectData.sales_count - last.sales_count) / last.sales_count) * 100 : 0;
+    
+    // Guardar solo si hay cambios significativos (más del 1%)
+    const significantChange = floorChange > 1 || volumeChange > 1 || salesChange > 1 || 
+                            projectData.sales_count !== last.sales_count || 
+                            projectData.listings_count !== last.listings_count;
+
+    if (significantChange) {
+      await pool.query(
+        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
+        [projectId, projectData.floor_price, projectData.volume_24h, projectData.sales_count, projectData.listings_count, projectData.avg_sale_price]
+      );
+      console.log(`📊 Price history updated for project ${projectId} - Floor: ${floorChange.toFixed(2)}%, Volume: ${volumeChange.toFixed(2)}%, Sales: ${salesChange.toFixed(2)}%`);
+    } else {
+      console.log(`⏭️ Skipping price history for project ${projectId} - No significant changes`);
+    }
+  } catch (error) {
+    console.error('Error saving price history:', error);
   }
 }
 
@@ -294,15 +343,27 @@ async function checkAlerts(project, projectData) {
           
           switch (alertConfig.type) {
             case 'floor':
-              if (projectData.floor_price && alertConfig.threshold) {
+              if (projectData.floor_price && alertConfig.threshold_value) {
                 // Obtener precio anterior basado en timeframe
                 const previousPrice = await getPreviousPrice(project.id, 'floor_price', alertConfig.timeframe);
                 if (previousPrice > 0) {
-                  const change = ((projectData.floor_price - previousPrice) / previousPrice) * 100;
-                  if (Math.abs(change) >= alertConfig.threshold) {
+                  const change = projectData.floor_price - previousPrice;
+                  const percentageChange = (change / previousPrice) * 100;
+                  
+                  let shouldTrigger = false;
+                  if (alertConfig.threshold_type === 'percentage') {
+                    shouldTrigger = Math.abs(percentageChange) >= alertConfig.threshold_value;
+                  } else {
+                    shouldTrigger = Math.abs(change) >= alertConfig.threshold_value;
+                  }
+                  
+                  if (shouldTrigger) {
                     shouldNotify = true;
-                    percentageChange = change;
-                    message = `Floor price ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
+                    percentageChange = percentageChange;
+                    const changeDisplay = alertConfig.threshold_type === 'percentage' 
+                      ? `${Math.abs(percentageChange).toFixed(2)}%` 
+                      : `${Math.abs(change).toFixed(4)} ETH`;
+                    message = `Floor price ${change > 0 ? 'increased' : 'decreased'} by ${changeDisplay} in ${getTimeframeName(alertConfig.timeframe)}`;
                   }
                 }
               }
@@ -1227,7 +1288,8 @@ async function handleAlertsSetup(interaction) {
   const projectName = interaction.options.getString('project');
   const alertType = interaction.options.getString('alert_type');
   const timeframe = interaction.options.getString('timeframe') || '24h';
-  const threshold = interaction.options.getNumber('threshold') || 5;
+  const thresholdType = interaction.options.getString('threshold_type') || 'percentage';
+  const thresholdValue = interaction.options.getNumber('threshold_value') || (thresholdType === 'percentage' ? 5 : 0.1);
 
   try {
     const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
@@ -1242,7 +1304,8 @@ async function handleAlertsSetup(interaction) {
     const alertConfig = {
       type: alertType,
       timeframe: timeframe,
-      threshold: threshold,
+      threshold_type: thresholdType,
+      threshold_value: thresholdValue,
       enabled: true
     };
 
@@ -1256,23 +1319,24 @@ async function handleAlertsSetup(interaction) {
       // Actualizar alerta existente
       await pool.query(
         'UPDATE user_alerts SET alert_types = $1, floor_threshold = $2, volume_threshold = $3, is_active = $4, updated_at = NOW() WHERE discord_user_id = $5 AND project_id = $6',
-        [JSON.stringify([alertConfig]), threshold, threshold, true, interaction.user.id, project.id]
+        [JSON.stringify([alertConfig]), thresholdValue, thresholdValue, true, interaction.user.id, project.id]
       );
     } else {
       // Insertar nueva alerta
       await pool.query(
         'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
-        [interaction.user.id, project.id, JSON.stringify([alertConfig]), threshold, threshold, true]
+        [interaction.user.id, project.id, JSON.stringify([alertConfig]), thresholdValue, thresholdValue, true]
       );
     }
 
+    const thresholdDisplay = thresholdType === 'percentage' ? `${thresholdValue}%` : `${thresholdValue} ETH`;
     const embed = new EmbedBuilder()
       .setTitle('✅ Alerta Configurada')
       .setDescription(`Alerta configurada para **${projectName}**`)
       .addFields(
         { name: 'Tipo', value: getAlertTypeName(alertType), inline: true },
         { name: 'Período', value: getTimeframeName(timeframe), inline: true },
-        { name: 'Umbral', value: `${threshold}%`, inline: true }
+        { name: 'Umbral', value: thresholdDisplay, inline: true }
       )
       .setColor('#10B981')
       .setTimestamp();
@@ -1326,11 +1390,19 @@ async function handleAlertsList(interaction) {
       .setTimestamp();
 
     alerts.forEach((alert, index) => {
-      const alertTypes = JSON.parse(alert.alert_types || '[]');
+      const alertConfigs = JSON.parse(alert.alert_types || '[]');
+      const typesText = alertConfigs.map(config => getAlertTypeName(config.type)).join(', ');
+      const thresholdsText = alertConfigs.map(config => {
+        const thresholdDisplay = config.threshold_type === 'percentage' 
+          ? `${config.threshold_value}%` 
+          : `${config.threshold_value} ETH`;
+        return `${getAlertTypeName(config.type)}: ${thresholdDisplay} (${getTimeframeName(config.timeframe)})`;
+      }).join('\n');
+      
       embed.addFields({
         name: `${index + 1}. ${alert.project_name}`,
-        value: `Tipos: ${alertTypes.join(', ')}\nFloor: ${alert.floor_threshold}%\nVolume: ${alert.volume_threshold} ETH`,
-        inline: true
+        value: `**Tipos:** ${typesText}\n**Configuración:**\n${thresholdsText}`,
+        inline: false
       });
     });
 
