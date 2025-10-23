@@ -235,13 +235,13 @@ async function getProjectData(contractAddress) {
 // Verificar alertas
 async function checkAlerts(project, newData) {
   try {
-    const { data: alerts, error } = await supabase
-      .from('user_alerts')
-      .select('*')
-      .eq('project_id', project.id)
-      .eq('is_active', true);
+    const result = await pool.query(
+      'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
+      [project.id]
+    );
+    const alerts = result.rows;
 
-    if (error || !alerts.length) return;
+    if (!alerts.length) return;
 
     for (const alert of alerts) {
       await processAlert(alert, project, newData);
@@ -526,7 +526,7 @@ async function handleAlertsSetup(interaction) {
     const alertTypes = types.split(',').map(t => t.trim());
 
     await pool.query(
-      'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (discord_user_id, project_id) DO UPDATE SET alert_types = $3, floor_threshold = $4, volume_threshold = $5, is_active = $6',
+      'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, floor_threshold, volume_threshold, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
       [interaction.user.id, project.id, JSON.stringify(alertTypes), 5.0, 10.0, true]
     );
 
@@ -551,19 +551,11 @@ async function handleAlertsSetup(interaction) {
 // Manejar listado de alertas
 async function handleAlertsList(interaction) {
   try {
-    const { data: alerts, error } = await supabase
-      .from('user_alerts')
-      .select(`
-        *,
-        nft_projects(name)
-      `)
-      .eq('discord_user_id', interaction.user.id)
-      .eq('is_active', true);
-
-    if (error) {
-      await interaction.reply({ content: '❌ Error al obtener alertas.', ephemeral: true });
-      return;
-    }
+    const result = await pool.query(
+      'SELECT ua.*, np.name as project_name FROM user_alerts ua JOIN nft_projects np ON ua.project_id = np.id WHERE ua.discord_user_id = $1 AND ua.is_active = true',
+      [interaction.user.id]
+    );
+    const alerts = result.rows;
 
     if (!alerts.length) {
       await interaction.reply({ content: '📋 No tienes alertas configuradas.', ephemeral: true });
@@ -577,9 +569,10 @@ async function handleAlertsList(interaction) {
       .setTimestamp();
 
     alerts.forEach((alert, index) => {
+      const alertTypes = JSON.parse(alert.alert_types || '[]');
       embed.addFields({
-        name: `${index + 1}. ${alert.nft_projects.name}`,
-        value: `Tipos: ${alert.alert_types.join(', ')}\nFloor: ${alert.floor_threshold}%\nVolume: ${alert.volume_threshold} ETH`,
+        name: `${index + 1}. ${alert.project_name}`,
+        value: `Tipos: ${alertTypes.join(', ')}\nFloor: ${alert.floor_threshold}%\nVolume: ${alert.volume_threshold} ETH`,
         inline: true
       });
     });
