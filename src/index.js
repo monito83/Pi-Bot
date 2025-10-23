@@ -131,10 +131,14 @@ const commands = [
             .setDescription('Tipo de alerta')
             .setRequired(true)
             .addChoices(
-              { name: 'Floor Price Change', value: 'floor' },
-              { name: 'Volume Change', value: 'volume' },
-              { name: 'Sales Count', value: 'sales' },
-              { name: 'Listings Count', value: 'listings' }
+              { name: 'Floor Price Change', value: 'floor_change' },
+              { name: 'Floor Price Above', value: 'floor_above' },
+              { name: 'Floor Price Below', value: 'floor_below' },
+              { name: 'Volume Change', value: 'volume_change' },
+              { name: 'Volume Above', value: 'volume_above' },
+              { name: 'Volume Below', value: 'volume_below' },
+              { name: 'Sales Count Change', value: 'sales_change' },
+              { name: 'Listings Count Change', value: 'listings_change' }
             ))
         .addStringOption(option =>
           option.setName('timeframe')
@@ -342,9 +346,8 @@ async function checkAlerts(project, projectData) {
           if (!alertConfig.enabled) continue;
           
           switch (alertConfig.type) {
-            case 'floor':
+            case 'floor_change':
               if (projectData.floor_price && alertConfig.threshold_value) {
-                // Obtener precio anterior basado en timeframe
                 const previousPrice = await getPreviousPrice(project.id, 'floor_price', alertConfig.timeframe);
                 if (previousPrice > 0) {
                   const change = projectData.floor_price - previousPrice;
@@ -369,43 +372,95 @@ async function checkAlerts(project, projectData) {
               }
               break;
               
-            case 'volume':
-              if (projectData.volume_24h && alertConfig.threshold) {
+            case 'floor_above':
+              if (projectData.floor_price && alertConfig.threshold_value) {
+                if (projectData.floor_price >= alertConfig.threshold_value) {
+                  shouldNotify = true;
+                  message = `Floor price reached ${alertConfig.threshold_value} ETH`;
+                }
+              }
+              break;
+              
+            case 'floor_below':
+              if (projectData.floor_price && alertConfig.threshold_value) {
+                if (projectData.floor_price <= alertConfig.threshold_value) {
+                  shouldNotify = true;
+                  message = `Floor price dropped to ${alertConfig.threshold_value} ETH`;
+                }
+              }
+              break;
+              
+            case 'volume_change':
+              if (projectData.volume_24h && alertConfig.threshold_value) {
                 const previousVolume = await getPreviousPrice(project.id, 'volume_24h', alertConfig.timeframe);
                 if (previousVolume > 0) {
-                  const change = ((projectData.volume_24h - previousVolume) / previousVolume) * 100;
-                  if (Math.abs(change) >= alertConfig.threshold) {
+                  const change = projectData.volume_24h - previousVolume;
+                  const percentageChange = (change / previousVolume) * 100;
+                  
+                  let shouldTrigger = false;
+                  if (alertConfig.threshold_type === 'percentage') {
+                    shouldTrigger = Math.abs(percentageChange) >= alertConfig.threshold_value;
+                  } else {
+                    shouldTrigger = Math.abs(change) >= alertConfig.threshold_value;
+                  }
+                  
+                  if (shouldTrigger) {
                     shouldNotify = true;
-                    percentageChange = change;
-                    message = `Volume ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
+                    percentageChange = percentageChange;
+                    const changeDisplay = alertConfig.threshold_type === 'percentage' 
+                      ? `${Math.abs(percentageChange).toFixed(2)}%` 
+                      : `${Math.abs(change).toFixed(4)} ETH`;
+                    message = `Volume ${change > 0 ? 'increased' : 'decreased'} by ${changeDisplay} in ${getTimeframeName(alertConfig.timeframe)}`;
                   }
                 }
               }
               break;
               
-            case 'sales':
-              if (projectData.sales_count && alertConfig.threshold) {
+            case 'volume_above':
+              if (projectData.volume_24h && alertConfig.threshold_value) {
+                if (projectData.volume_24h >= alertConfig.threshold_value) {
+                  shouldNotify = true;
+                  message = `Volume reached ${alertConfig.threshold_value} ETH`;
+                }
+              }
+              break;
+              
+            case 'volume_below':
+              if (projectData.volume_24h && alertConfig.threshold_value) {
+                if (projectData.volume_24h <= alertConfig.threshold_value) {
+                  shouldNotify = true;
+                  message = `Volume dropped to ${alertConfig.threshold_value} ETH`;
+                }
+              }
+              break;
+              
+            case 'sales_change':
+              if (projectData.sales_count && alertConfig.threshold_value) {
                 const previousSales = await getPreviousPrice(project.id, 'sales_count', alertConfig.timeframe);
                 if (previousSales > 0) {
-                  const change = ((projectData.sales_count - previousSales) / previousSales) * 100;
-                  if (Math.abs(change) >= alertConfig.threshold) {
+                  const change = projectData.sales_count - previousSales;
+                  const percentageChange = (change / previousSales) * 100;
+                  
+                  if (Math.abs(percentageChange) >= alertConfig.threshold_value) {
                     shouldNotify = true;
-                    percentageChange = change;
-                    message = `Sales count ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
+                    percentageChange = percentageChange;
+                    message = `Sales count ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(percentageChange).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
                   }
                 }
               }
               break;
               
-            case 'listings':
-              if (projectData.listings_count && alertConfig.threshold) {
+            case 'listings_change':
+              if (projectData.listings_count && alertConfig.threshold_value) {
                 const previousListings = await getPreviousPrice(project.id, 'listings_count', alertConfig.timeframe);
                 if (previousListings > 0) {
-                  const change = ((projectData.listings_count - previousListings) / previousListings) * 100;
-                  if (Math.abs(change) >= alertConfig.threshold) {
+                  const change = projectData.listings_count - previousListings;
+                  const percentageChange = (change / previousListings) * 100;
+                  
+                  if (Math.abs(percentageChange) >= alertConfig.threshold_value) {
                     shouldNotify = true;
-                    percentageChange = change;
-                    message = `Listings count ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
+                    percentageChange = percentageChange;
+                    message = `Listings count ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(percentageChange).toFixed(2)}% in ${getTimeframeName(alertConfig.timeframe)}`;
                   }
                 }
               }
@@ -1290,6 +1345,11 @@ async function handleAlertsSetup(interaction) {
   const timeframe = interaction.options.getString('timeframe') || '24h';
   const thresholdType = interaction.options.getString('threshold_type') || 'percentage';
   const thresholdValue = interaction.options.getNumber('threshold_value') || (thresholdType === 'percentage' ? 5 : 0.1);
+  
+  // Debug: Log the raw values
+  console.log(`🔍 Raw threshold_value: ${interaction.options.getNumber('threshold_value')}`);
+  console.log(`🔍 thresholdType: ${thresholdType}`);
+  console.log(`🔍 Final thresholdValue: ${thresholdValue}`);
 
   try {
     const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
@@ -1351,10 +1411,14 @@ async function handleAlertsSetup(interaction) {
 // Helper functions para nombres más amigables
 function getAlertTypeName(type) {
   const names = {
-    'floor': 'Floor Price Change',
-    'volume': 'Volume Change', 
-    'sales': 'Sales Count',
-    'listings': 'Listings Count'
+    'floor_change': 'Floor Price Change',
+    'floor_above': 'Floor Price Above',
+    'floor_below': 'Floor Price Below',
+    'volume_change': 'Volume Change',
+    'volume_above': 'Volume Above',
+    'volume_below': 'Volume Below',
+    'sales_change': 'Sales Count Change',
+    'listings_change': 'Listings Count Change'
   };
   return names[type] || type;
 }
