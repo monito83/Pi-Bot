@@ -67,7 +67,8 @@ const commands = [
     .addStringOption(option =>
       option.setName('project')
         .setDescription('Nombre del proyecto')
-        .setRequired(true)),
+        .setRequired(true)
+        .setAutocomplete(true)),
 
   new SlashCommandBuilder()
     .setName('projects')
@@ -79,7 +80,8 @@ const commands = [
     .addStringOption(option =>
       option.setName('project')
         .setDescription('Nombre del proyecto')
-        .setRequired(true))
+        .setRequired(true)
+        .setAutocomplete(true))
     .addStringOption(option =>
       option.setName('period')
         .setDescription('Período de tiempo')
@@ -96,7 +98,8 @@ const commands = [
     .addStringOption(option =>
       option.setName('project')
         .setDescription('Nombre del proyecto')
-        .setRequired(true))
+        .setRequired(true)
+        .setAutocomplete(true))
     .addStringOption(option =>
       option.setName('period')
         .setDescription('Período de tiempo')
@@ -121,7 +124,8 @@ const commands = [
         .addStringOption(option =>
           option.setName('project')
             .setDescription('Nombre del proyecto')
-            .setRequired(true))
+            .setRequired(true)
+            .setAutocomplete(true))
         .addStringOption(option =>
           option.setName('types')
             .setDescription('Tipos de alertas (floor,volume,sales,listings)')
@@ -137,7 +141,17 @@ const commands = [
         .addStringOption(option =>
           option.setName('project')
             .setDescription('Nombre del proyecto')
-            .setRequired(true)))
+            .setRequired(true)
+            .setAutocomplete(true))),
+
+  new SlashCommandBuilder()
+    .setName('delete')
+    .setDescription('Eliminar un proyecto del tracking')
+    .addStringOption(option =>
+      option.setName('project')
+        .setDescription('Nombre del proyecto a eliminar')
+        .setRequired(true)
+        .setAutocomplete(true))
 ];
 
 // Registrar comandos
@@ -231,6 +245,127 @@ async function trackProject(project) {
 
   } catch (error) {
     console.error(`Error tracking project ${project.name}:`, error);
+  }
+}
+
+// Verificar alertas (basado en el sistema de WL Manager)
+async function checkAlerts(project, projectData) {
+  try {
+    // Obtener alertas activas para este proyecto
+    const result = await pool.query(
+      'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
+      [project.id]
+    );
+
+    if (result.rows.length === 0) return;
+
+    for (const alert of result.rows) {
+      try {
+        const alertTypes = JSON.parse(alert.alert_types || '[]');
+        let shouldNotify = false;
+        let message = '';
+        let percentageChange = 0;
+
+        // Verificar cada tipo de alerta
+        for (const alertType of alertTypes) {
+          switch (alertType) {
+            case 'floor':
+              if (projectData.floor_price && alert.floor_threshold) {
+                const change = ((projectData.floor_price - alert.floor_threshold) / alert.floor_threshold) * 100;
+                if (Math.abs(change) >= 5) { // Cambio mínimo del 5%
+                  shouldNotify = true;
+                  percentageChange = change;
+                  message = `Floor price ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}%`;
+                }
+              }
+              break;
+              
+            case 'volume':
+              if (projectData.volume_24h && alert.volume_threshold) {
+                const change = ((projectData.volume_24h - alert.volume_threshold) / alert.volume_threshold) * 100;
+                if (Math.abs(change) >= 10) { // Cambio mínimo del 10%
+                  shouldNotify = true;
+                  percentageChange = change;
+                  message = `Volume ${change > 0 ? 'increased' : 'decreased'} by ${Math.abs(change).toFixed(2)}%`;
+                }
+              }
+              break;
+              
+            case 'sales':
+              if (projectData.sales_count && alert.sales_threshold) {
+                if (projectData.sales_count >= alert.sales_threshold) {
+                  shouldNotify = true;
+                  message = `Sales count reached ${projectData.sales_count}`;
+                }
+              }
+              break;
+          }
+        }
+
+        if (shouldNotify) {
+          // Verificar si ya se envió una alerta reciente (evitar spam)
+          const recentAlert = await pool.query(
+            'SELECT * FROM price_history WHERE project_id = $1 AND recorded_at > NOW() - INTERVAL \'1 hour\'',
+            [project.id]
+          );
+
+          if (recentAlert.rows.length === 0) {
+            // Enviar notificación a Discord
+            await sendDiscordAlert(alert, projectData, message, percentageChange);
+            
+            console.log(`🚨 Alert sent: ${project.name} - ${message}`);
+          }
+        }
+      } catch (alertError) {
+        console.error('Error processing individual alert:', alertError);
+      }
+    }
+  } catch (error) {
+    console.error('Error checking alerts:', error);
+  }
+}
+
+// Enviar alerta a Discord
+async function sendDiscordAlert(alert, projectData, message, percentageChange) {
+  try {
+    // Obtener información del proyecto
+    const projectResult = await pool.query('SELECT * FROM nft_projects WHERE id = $1', [alert.project_id]);
+    const project = projectResult.rows[0];
+    
+    if (!project) return;
+
+    const currency = projectData.currency || 'ETH';
+    const changeEmoji = percentageChange > 0 ? '📈' : '📉';
+    const changeColor = percentageChange > 0 ? '#10B981' : '#EF4444';
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${changeEmoji} ${project.name} - Alert`)
+      .setDescription(`**${message}**`)
+      .setColor(changeColor)
+      .addFields(
+        { 
+          name: '💰 Floor Price', 
+          value: `${projectData.floor_price.toFixed(2)} ${currency}`, 
+          inline: true 
+        },
+        { 
+          name: '📊 Volume 24h', 
+          value: `${projectData.volume_24h.toFixed(2)} ${currency}`, 
+          inline: true 
+        },
+        { 
+          name: '🛒 Sales Count', 
+          value: `${projectData.sales_count}`, 
+          inline: true 
+        }
+      )
+      .setTimestamp();
+
+    // Por ahora solo log - necesitarías configurar un canal específico
+    console.log(`🚨 Discord Alert: ${project.name} - ${message}`);
+    
+  } catch (error) {
+    console.error('Error sending Discord alert:', error);
   }
 }
 
@@ -520,10 +655,41 @@ client.on('interactionCreate', async (interaction) => {
       case 'alerts':
         await handleAlertsCommand(interaction);
         break;
+      case 'delete':
+        await handleDeleteCommand(interaction);
+        break;
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
     await interaction.reply({ content: '❌ Error interno. Intenta de nuevo.', ephemeral: true });
+  }
+});
+
+// Manejar autocompletado
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isAutocomplete()) return;
+
+  try {
+    const focusedValue = interaction.options.getFocused();
+    
+    if (interaction.commandName === 'status' || 
+        interaction.commandName === 'floor' || 
+        interaction.commandName === 'volume' ||
+        interaction.commandName === 'delete' ||
+        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'setup') ||
+        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'disable')) {
+      
+      const projects = await getProjectsList();
+      const filtered = projects
+        .filter(project => project.toLowerCase().includes(focusedValue.toLowerCase()))
+        .slice(0, 25); // Discord limita a 25 opciones
+      
+      await interaction.respond(
+        filtered.map(project => ({ name: project, value: project }))
+      );
+    }
+  } catch (error) {
+    console.error('Error handling autocomplete:', error);
   }
 });
 
@@ -533,31 +699,61 @@ async function handleSetupCommand(interaction) {
   const contractAddress = interaction.options.getString('contract');
 
   try {
-    const result = await pool.query(
-      'INSERT INTO nft_projects (name, contract_address, marketplace, status) VALUES ($1, $2, $3, $4) RETURNING *',
-      [projectName, contractAddress, 'magic-eden', 'active']
-    );
-
-    if (result.rows.length === 0) {
-      await interaction.reply({ content: '❌ Error al configurar proyecto.', ephemeral: true });
+    await interaction.deferReply();
+    
+    // Verificar si el proyecto ya existe
+    const existingProject = await pool.query('SELECT * FROM nft_projects WHERE name = $1 OR contract_address = $2', [projectName, contractAddress]);
+    
+    if (existingProject.rows.length > 0) {
+      await interaction.editReply({ content: '❌ El proyecto ya existe.' });
       return;
     }
 
+    // Validar el proyecto antes de agregarlo
+    const validation = await validateProject(contractAddress);
+    
+    if (!validation.valid) {
+      await interaction.editReply({ content: `❌ **Error de validación:** ${validation.error}` });
+      return;
+    }
+
+    // Insertar nuevo proyecto con datos iniciales
+    const result = await pool.query(
+      'INSERT INTO nft_projects (name, contract_address, marketplace, status, last_floor_price, last_volume, last_sales_count, last_listings_count, last_avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+      [
+        projectName, 
+        contractAddress,
+        'magic-eden',
+        'active',
+        validation.data.floor_price,
+        validation.data.volume_24h,
+        validation.data.sales_count,
+        validation.data.listings_count,
+        validation.data.avg_sale_price
+      ]
+    );
+
+    const project = result.rows[0];
+    const currency = validation.data.currency || 'ETH';
+    
     const embed = new EmbedBuilder()
       .setTitle('✅ Proyecto Configurado')
       .setDescription(`**${projectName}** ha sido configurado para tracking`)
       .addFields(
         { name: 'Contract', value: contractAddress, inline: true },
         { name: 'Marketplace', value: 'Magic Eden', inline: true },
-        { name: 'Status', value: 'Active', inline: true }
+        { name: 'Status', value: 'Active', inline: true },
+        { name: 'Floor Price', value: `${validation.data.floor_price.toFixed(2)} ${currency}`, inline: true },
+        { name: 'Volume 24h', value: `${validation.data.volume_24h.toFixed(2)} ${currency}`, inline: true },
+        { name: 'Sales', value: `${validation.data.sales_count}`, inline: true }
       )
       .setColor('#10B981')
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
   } catch (error) {
     console.error('Error in handleSetupCommand:', error);
-    await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+    await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
 
@@ -1038,6 +1234,83 @@ async function handleAlertsDisable(interaction) {
   } catch (error) {
     console.error('Error in handleAlertsDisable:', error);
     await interaction.reply({ content: '❌ Error interno.', ephemeral: true });
+  }
+}
+
+// Validar proyecto antes de agregarlo
+async function validateProject(contractAddress) {
+  try {
+    console.log(`🔍 Validating project: ${contractAddress}`);
+    
+    // Intentar obtener datos del proyecto
+    const projectData = await getProjectData(contractAddress);
+    
+    if (!projectData) {
+      return {
+        valid: false,
+        error: 'No se pudo encontrar datos para este contrato. Verifica que sea válido.'
+      };
+    }
+    
+    // Verificar que tenga datos básicos
+    if (!projectData.floor_price || projectData.floor_price === 0) {
+      return {
+        valid: false,
+        error: 'El proyecto no tiene precio de floor válido. Puede ser que no esté listado en Magic Eden.'
+      };
+    }
+    
+    return {
+      valid: true,
+      data: projectData
+    };
+  } catch (error) {
+    console.error('Error validating project:', error);
+    return {
+      valid: false,
+      error: 'Error interno al validar el proyecto.'
+    };
+  }
+}
+
+// Manejar comando delete
+async function handleDeleteCommand(interaction) {
+  const projectName = interaction.options.getString('project');
+
+  try {
+    await interaction.deferReply();
+    
+    // Buscar el proyecto
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+
+    // Eliminar el proyecto y sus datos relacionados
+    await pool.query('DELETE FROM user_alerts WHERE project_id = $1', [project.id]);
+    await pool.query('DELETE FROM price_history WHERE project_id = $1', [project.id]);
+    await pool.query('DELETE FROM nft_projects WHERE id = $1', [project.id]);
+
+    await interaction.editReply({ 
+      content: `✅ **Proyecto "${project.name}" eliminado exitosamente!**\n\n🗑️ Se eliminaron:\n• El proyecto\n• Todas las alertas asociadas\n• El historial de precios` 
+    });
+  } catch (error) {
+    console.error('Error in handleDeleteCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Obtener lista de proyectos para autocompletado
+async function getProjectsList() {
+  try {
+    const result = await pool.query('SELECT name FROM nft_projects ORDER BY name');
+    return result.rows.map(row => row.name);
+  } catch (error) {
+    console.error('Error getting projects list:', error);
+    return [];
   }
 }
 
