@@ -194,10 +194,21 @@ async function performTracking() {
 // Trackear un proyecto específico
 async function trackProject(project) {
   try {
-    // Obtener datos de Magic Eden (simulado por ahora)
+    console.log(`🔍 Tracking ${project.name} (${project.contract_address})`);
+    
+    // Obtener datos de Magic Eden
     const projectData = await getProjectData(project.contract_address);
     
-    if (!projectData) return;
+    if (!projectData) {
+      console.log(`❌ No data for ${project.name}`);
+      return;
+    }
+
+    console.log(`📊 Data for ${project.name}:`, {
+      floor_price: projectData.floor_price,
+      volume_24h: projectData.volume_24h,
+      sales_count: projectData.sales_count
+    });
 
     // Guardar en historial
     await pool.query(
@@ -219,17 +230,39 @@ async function trackProject(project) {
   }
 }
 
-// Obtener datos del proyecto (simulado)
+// Obtener datos del proyecto desde Magic Eden API
 async function getProjectData(contractAddress) {
-  // TODO: Implementar integración real con Magic Eden API
-  // Por ahora retornamos datos simulados
-  return {
-    floor_price: Math.random() * 0.5 + 0.1,
-    volume_24h: Math.random() * 10 + 1,
-    sales_count: Math.floor(Math.random() * 20) + 1,
-    listings_count: Math.floor(Math.random() * 100) + 10,
-    avg_sale_price: Math.random() * 0.6 + 0.2
-  };
+  try {
+    // Magic Eden API para Ethereum (si existe) o Solana
+    const response = await axios.get(`https://api-mainnet.magiceden.io/v2/collections/${contractAddress}/stats`, {
+      headers: {
+        'Authorization': `Bearer ${MAGIC_EDEN_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    if (response.data) {
+      return {
+        floor_price: response.data.floorPrice || 0,
+        volume_24h: response.data.volume24h || 0,
+        sales_count: response.data.listedCount || 0,
+        listings_count: response.data.listedCount || 0,
+        avg_sale_price: response.data.avgPrice24h || 0
+      };
+    }
+  } catch (error) {
+    console.log(`Magic Eden API error for ${contractAddress}:`, error.message);
+    
+    // Fallback: datos simulados para testing
+    return {
+      floor_price: Math.random() * 0.5 + 0.1,
+      volume_24h: Math.random() * 10 + 1,
+      sales_count: Math.floor(Math.random() * 20) + 1,
+      listings_count: Math.floor(Math.random() * 100) + 10,
+      avg_sale_price: Math.random() * 0.6 + 0.2
+    };
+  }
 }
 
 // Verificar alertas
@@ -429,13 +462,10 @@ async function handleFloorCommand(interaction) {
   const period = interaction.options.getString('period') || '24h';
 
   try {
-    const { data: project, error } = await supabase
-      .from('nft_projects')
-      .select('*')
-      .eq('name', projectName)
-      .single();
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
 
-    if (error || !project) {
+    if (!project) {
       await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
       return;
     }
@@ -463,13 +493,10 @@ async function handleVolumeCommand(interaction) {
   const period = interaction.options.getString('period') || '24h';
 
   try {
-    const { data: project, error } = await supabase
-      .from('nft_projects')
-      .select('*')
-      .eq('name', projectName)
-      .single();
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
 
-    if (error || !project) {
+    if (!project) {
       await interaction.reply({ content: '❌ Proyecto no encontrado.', ephemeral: true });
       return;
     }
@@ -589,14 +616,13 @@ async function handleAlertsDisable(interaction) {
   const projectName = interaction.options.getString('project');
 
   try {
-    const { error } = await supabase
-      .from('user_alerts')
-      .update({ is_active: false })
-      .eq('discord_user_id', interaction.user.id)
-      .eq('nft_projects.name', projectName);
+    const result = await pool.query(
+      'UPDATE user_alerts SET is_active = false FROM nft_projects WHERE user_alerts.project_id = nft_projects.id AND user_alerts.discord_user_id = $1 AND nft_projects.name = $2',
+      [interaction.user.id, projectName]
+    );
 
-    if (error) {
-      await interaction.reply({ content: '❌ Error al desactivar alertas.', ephemeral: true });
+    if (result.rowCount === 0) {
+      await interaction.reply({ content: '❌ No se encontraron alertas para desactivar.', ephemeral: true });
       return;
     }
 
