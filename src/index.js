@@ -837,20 +837,30 @@ async function getProjectData(contractAddress) {
   return null;
 }
 
-// Magic Eden API (Ethereum + Monad Testnet) - CORRECT ENDPOINTS WITH RETRY
+// Magic Eden API V4 (Ethereum + Monad Testnet) - UPDATED TO V4
 async function getMagicEdenData(contractAddress) {
   try {
-    // Intentar diferentes endpoints según la red
+    // Intentar diferentes endpoints según la red usando V4
     const endpoints = [
-      // Endpoint correcto para colecciones de Ethereum (v7 con id)
+      // Endpoint V4 para colecciones de Ethereum
       {
-        url: `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
-        chain: 'ethereum'
+        url: `https://api-mainnet.magiceden.dev/v4/collections`,
+        chain: 'ethereum',
+        method: 'POST',
+        data: {
+          contractAddress: contractAddress,
+          chain: 'ethereum'
+        }
       },
-      // Endpoint correcto para colecciones de Monad Testnet (v7 con id)
+      // Endpoint V4 para colecciones de Monad Testnet
       {
-        url: `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${contractAddress}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`,
-        chain: 'monad-testnet'
+        url: `https://api-mainnet.magiceden.dev/v4/collections`,
+        chain: 'monad-testnet',
+        method: 'POST',
+        data: {
+          contractAddress: contractAddress,
+          chain: 'monad-testnet'
+        }
       }
     ];
 
@@ -858,7 +868,10 @@ async function getMagicEdenData(contractAddress) {
       try {
         console.log(`🔍 Trying Magic Eden endpoint: ${endpoint.url}`);
         
-        const response = await axios.get(endpoint.url, {
+        const response = await axios({
+          method: endpoint.method,
+          url: endpoint.url,
+          data: endpoint.data,
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
@@ -870,7 +883,7 @@ async function getMagicEdenData(contractAddress) {
         if (response.data) {
           console.log(`✅ Magic Eden data found:`, response.data);
           
-          // Para API v3, buscar la colección específica en el array
+          // Para API v4, procesar la respuesta según la nueva estructura
           let collection = null;
           
           if (response.data.collections && Array.isArray(response.data.collections)) {
@@ -1569,13 +1582,16 @@ async function handleTestApiCommand(interaction) {
     
     // Test Ethereum (Moriusa)
     const moriusaContract = '0xa8edf6c9ac6bf1a00afaaca6e0ca705b89192fb9';
-    const ethereumUrl = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${moriusaContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+    const ethereumUrl = `https://api-mainnet.magiceden.dev/v4/collections`;
     
     console.log(`🔍 Testing Ethereum API: ${ethereumUrl}`);
     
     let ethereumResult = '❌ Failed';
     try {
-      const response = await axios.get(ethereumUrl, {
+      const response = await axios.post(ethereumUrl, {
+        contractAddress: moriusaContract,
+        chain: 'ethereum'
+      }, {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
@@ -1604,13 +1620,16 @@ async function handleTestApiCommand(interaction) {
     
     // Test Monad Testnet (Momo)
     const momoContract = '0xbc8f6824fde979848ad97a52bced2d6ca1842a68';
-    const monadUrl = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${momoContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+    const monadUrl = `https://api-mainnet.magiceden.dev/v4/collections`;
     
     console.log(`🔍 Testing Monad API: ${monadUrl}`);
     
     let monadResult = '❌ Failed';
     try {
-      const response = await axios.get(monadUrl, {
+      const response = await axios.post(monadUrl, {
+        contractAddress: momoContract,
+        chain: 'monad-testnet'
+      }, {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',

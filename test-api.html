@@ -41,18 +41,22 @@
             addResult('🔍 Testing Ethereum API...', 'info');
             
             try {
-                const url = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/collections/v7?id=${moriusaContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+                const url = `https://api-mainnet.magiceden.dev/v4/collections`;
                 
                 addResult(`🔗 URL: ${url}`, 'info');
                 
                 const response = await fetch(url, {
-                    method: 'GET',
+                    method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${API_KEY}`,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
                         'User-Agent': 'Browser-Test/1.0'
-                    }
+                    },
+                    body: JSON.stringify({
+                        contractAddress: moriusaContract,
+                        chain: 'ethereum'
+                    })
                 });
                 
                 addResult(`📊 Status: ${response.status}`, response.ok ? 'success' : 'error');
@@ -92,18 +96,22 @@
             addResult('🔍 Testing Monad Testnet API...', 'info');
             
             try {
-                const url = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7?id=${momoContract}&includeMintStages=false&includeSecurityConfigs=false&normalizeRoyalties=false&useNonFlaggedFloorAsk=false&sortBy=allTimeVolume&limit=20`;
+                const url = `https://api-mainnet.magiceden.dev/v4/collections`;
                 
                 addResult(`🔗 URL: ${url}`, 'info');
                 
                 const response = await fetch(url, {
-                    method: 'GET',
+                    method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${API_KEY}`,
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
                         'User-Agent': 'Browser-Test/1.0'
-                    }
+                    },
+                    body: JSON.stringify({
+                        contractAddress: momoContract,
+                        chain: 'monad-testnet'
+                    })
                 });
                 
                 addResult(`📊 Status: ${response.status}`, response.ok ? 'success' : 'error');
