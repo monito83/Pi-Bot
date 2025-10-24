@@ -1,4 +1,5 @@
 console.log('🔥 LOG 1: Starting to load modules...');
+console.log('🔥 ULTRA SIMPLE TEST v2: This code is definitely running!');
 const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
 console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
