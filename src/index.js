@@ -303,8 +303,10 @@ async function trackProject(project) {
 
     // Verificar alertas
     console.log(`🔔 About to check alerts for ${project.name} (ID: ${project.id})`);
+    console.log(`🔔 Calling checkAlerts function...`);
     try {
       await checkAlerts(project, projectData);
+      console.log(`🔔 checkAlerts function completed successfully`);
     } catch (alertError) {
       console.error(`❌ Error checking alerts for ${project.name}:`, alertError);
       console.error(`❌ Error stack:`, alertError.stack);
