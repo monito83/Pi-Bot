@@ -365,10 +365,12 @@ async function checkAlerts(project, projectData) {
     });
 
     // Obtener alertas activas para este proyecto
+    console.log(`🔔 Querying database for alerts...`);
     const result = await pool.query(
       'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
       [project.id]
     );
+    console.log(`🔔 Database query result: ${result.rows.length} alerts found`);
 
     console.log(`🔔 Found ${result.rows.length} active alerts for project ${project.name}`);
 
