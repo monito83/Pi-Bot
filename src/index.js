@@ -13,7 +13,7 @@ console.log('🚀 Environment:', process.env.NODE_ENV || 'development');
 console.log('🚀 ================================================');
 
 // 🔥 ULTRA SIMPLE TEST LOG
-console.log('🔥 ULTRA SIMPLE TEST: This code is definitely running!');
+console.log('🔥 ULTRA SIMPLE TEST v1: This code is definitely running!');
 
 // Crear servidor Express para healthcheck
 const app = express();
@@ -369,7 +369,7 @@ async function savePriceHistoryIfChanged(projectId, projectData) {
 
 // Verificar alertas (basado en el sistema de WL Manager)
 async function checkAlerts(project, projectData) {
-  console.log(`🔔 SIMPLE: Starting checkAlerts for ${project.name} (ID: ${project.id})`);
+  console.log(`🔔 SIMPLE v1: Starting checkAlerts for ${project.name} (ID: ${project.id})`);
   
   try {
     // Obtener alertas activas para este proyecto
@@ -378,10 +378,10 @@ async function checkAlerts(project, projectData) {
       [project.id]
     );
     
-    console.log(`🔔 SIMPLE: Found ${result.rows.length} active alerts for project ${project.name}`);
+    console.log(`🔔 SIMPLE v1: Found ${result.rows.length} active alerts for project ${project.name}`);
 
     if (result.rows.length === 0) {
-      console.log(`🔔 SIMPLE: No active alerts found for project ${project.name}`);
+      console.log(`🔔 SIMPLE v1: No active alerts found for project ${project.name}`);
       return;
     }
 
