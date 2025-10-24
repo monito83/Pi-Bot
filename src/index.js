@@ -1734,6 +1734,42 @@ async function getProjectsList() {
   }
 }
 
+// Obtener precio anterior para comparaciones
+async function getPreviousPrice(projectId, field, timeframe) {
+  try {
+    let timeCondition = '';
+    switch (timeframe) {
+      case '1h':
+        timeCondition = "recorded_at > NOW() - INTERVAL '1 hour'";
+        break;
+      case '24h':
+        timeCondition = "recorded_at > NOW() - INTERVAL '24 hours'";
+        break;
+      case '7d':
+        timeCondition = "recorded_at > NOW() - INTERVAL '7 days'";
+        break;
+      case '30d':
+        timeCondition = "recorded_at > NOW() - INTERVAL '30 days'";
+        break;
+      default:
+        timeCondition = "recorded_at > NOW() - INTERVAL '24 hours'";
+    }
+
+    const result = await pool.query(
+      `SELECT ${field} FROM price_history WHERE project_id = $1 AND ${timeCondition} ORDER BY recorded_at ASC LIMIT 1`,
+      [projectId]
+    );
+
+    if (result.rows.length > 0) {
+      return parseFloat(result.rows[0][field]) || 0;
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error getting previous price:', error);
+    return 0;
+  }
+}
+
 // Obtener precio ETH desde CoinGecko
 async function getETHPrice() {
   try {
