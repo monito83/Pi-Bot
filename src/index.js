@@ -837,7 +837,7 @@ async function getProjectData(contractAddress) {
   return null;
 }
 
-// Magic Eden API V4 (Ethereum + Monad Testnet) - UPDATED TO V4
+// Magic Eden API V4 (Ethereum + Monad Testnet) - UPDATED TO V4 - FORCE DEPLOY
 async function getMagicEdenData(contractAddress) {
   try {
     // Intentar diferentes endpoints según la red usando V4
@@ -866,7 +866,8 @@ async function getMagicEdenData(contractAddress) {
 
     for (const endpoint of endpoints) {
       try {
-        console.log(`🔍 Trying Magic Eden endpoint: ${endpoint.url}`);
+        console.log(`🔍 Trying Magic Eden V4 endpoint: ${endpoint.url}`);
+        console.log(`🔍 V4 POST data:`, endpoint.data);
         
         const response = await axios({
           method: endpoint.method,
