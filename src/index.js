@@ -1,9 +1,16 @@
+console.log('🔥 LOG 1: Starting to load modules...');
 const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
+console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
+console.log('🔥 LOG 3: PostgreSQL loaded');
 const cron = require('node-cron');
+console.log('🔥 LOG 4: Cron loaded');
 const axios = require('axios');
+console.log('🔥 LOG 5: Axios loaded');
 const express = require('express');
+console.log('🔥 LOG 6: Express loaded');
 require('dotenv').config();
+console.log('🔥 LOG 7: Dotenv loaded');
 
 // 🚀 DEPLOYMENT VERIFICATION LOG
 console.log('🚀 ===== BOT STARTING - DEPLOYMENT VERIFICATION =====');
@@ -15,9 +22,11 @@ console.log('🚀 ================================================');
 // 🔥 ULTRA SIMPLE TEST LOG
 console.log('🔥 ULTRA SIMPLE TEST v1: This code is definitely running!');
 
+console.log('🔥 LOG 8: Starting Express server setup...');
 // Crear servidor Express para healthcheck
 const app = express();
 const PORT = process.env.PORT || 3000;
+console.log('🔥 LOG 9: Express server created, PORT:', PORT);
 
 // Endpoint de health
 app.get('/health', (req, res) => {
@@ -33,13 +42,20 @@ app.listen(PORT, () => {
   console.log(`🌐 Healthcheck server running on port ${PORT}`);
 });
 
+console.log('🔥 LOG 10: Starting environment variables setup...');
 // Configuración
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
+console.log('🔥 LOG 11: DISCORD_TOKEN loaded:', !!DISCORD_TOKEN);
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+console.log('🔥 LOG 12: DISCORD_CLIENT_ID loaded:', !!DISCORD_CLIENT_ID);
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
+console.log('🔥 LOG 13: DISCORD_GUILD_ID loaded:', !!DISCORD_GUILD_ID);
 const DATABASE_URL = process.env.DATABASE_URL;
+console.log('🔥 LOG 14: DATABASE_URL loaded:', !!DATABASE_URL);
 const MAGIC_EDEN_API_KEY = process.env.MAGIC_EDEN_API_KEY;
+console.log('🔥 LOG 15: MAGIC_EDEN_API_KEY loaded:', !!MAGIC_EDEN_API_KEY);
 const MONAD_RPC_URL = process.env.MONAD_RPC_URL;
+console.log('🔥 LOG 16: MONAD_RPC_URL loaded:', !!MONAD_RPC_URL);
 
 // Inicializar cliente Discord
 const client = new Client({
@@ -52,10 +68,12 @@ const client = new Client({
 });
 
 // Inicializar PostgreSQL
+console.log('🔥 LOG 17: Starting PostgreSQL pool setup...');
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+console.log('🔥 LOG 18: PostgreSQL pool created');
 
 // Comandos slash
 const commands = [
