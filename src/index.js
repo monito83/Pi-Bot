@@ -95,8 +95,30 @@ async function initializeServerConfig() {
   }
 }
 
+// Crear tabla de alertas enviadas para anti-spam
+async function initializeAlertHistory() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS alert_history (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES nft_projects(id),
+        alert_type TEXT NOT NULL,
+        alert_value TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(project_id, alert_type, alert_value, DATE(sent_at))
+      )
+    `);
+    console.log('✅ Alert history table initialized');
+  } catch (error) {
+    console.error('Error initializing alert history table:', error);
+  }
+}
+
 // Inicializar configuración del servidor
 initializeServerConfig();
+
+// Inicializar historial de alertas
+initializeAlertHistory();
 
 // Comandos slash
 const commands = [
@@ -166,6 +188,15 @@ const commands = [
     .setDescription('Probar la API de Magic Eden'),
 
   new SlashCommandBuilder()
+    .setName('verify-price')
+    .setDescription('Verificar precio actual de un proyecto')
+    .addStringOption(option =>
+      option.setName('project')
+        .setDescription('Nombre del proyecto')
+        .setRequired(true)
+        .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
     .setName('alerts')
     .setDescription('Gestionar alertas')
     .addSubcommand(subcommand =>
@@ -222,6 +253,15 @@ const commands = [
       subcommand
         .setName('disable')
         .setDescription('Desactivar alertas')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto')
+            .setRequired(true)
+            .setAutocomplete(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('enable')
+        .setDescription('Reactivar alertas')
         .addStringOption(option =>
           option.setName('project')
             .setDescription('Nombre del proyecto')
@@ -976,14 +1016,28 @@ async function processAlert(alert, project, newData, guildId) {
     let shouldNotify = false;
     let message = '';
 
-    // Procesar cada configuración de alerta
-    for (const alertConfig of alertConfigs) {
-      console.log(`🔔 processAlert: Processing alert config:`, alertConfig);
-      
-      if (!alertConfig.enabled) {
-        console.log(`🔔 processAlert: Alert config disabled, skipping`);
-        continue;
-      }
+        // Procesar cada configuración de alerta
+        for (const alertConfig of alertConfigs) {
+          console.log(`🔔 processAlert: Processing alert config:`, alertConfig);
+          
+          if (!alertConfig.enabled) {
+            console.log(`🔔 processAlert: Alert config disabled, skipping`);
+            continue;
+          }
+
+          // Verificar si ya se envió esta alerta hoy (anti-spam)
+          const alertKey = `${alertConfig.type}_${alertConfig.threshold_value}`;
+          const today = new Date().toISOString().split('T')[0];
+          
+          const existingAlert = await pool.query(
+            'SELECT id FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND DATE(sent_at) = $4',
+            [project.id, alertConfig.type, alertKey, today]
+          );
+
+          if (existingAlert.rows.length > 0) {
+            console.log(`🔔 processAlert: Alert already sent today, skipping to prevent spam`);
+            continue;
+          }
 
       // Verificar floor price
       if (alertConfig.type === 'floor_above' || alertConfig.type === 'floor_below') {
@@ -1067,6 +1121,28 @@ async function processAlert(alert, project, newData, guildId) {
         .setColor(0xff0000)
         .setTimestamp();
 
+      // Agregar imagen del NFT si está disponible
+      if (newData?.image) {
+        embed.setThumbnail(newData.image);
+      }
+
+      // Agregar link al marketplace si está disponible
+      if (newData?.marketplace_url) {
+        embed.addFields({
+          name: '🔗 Ver Colección',
+          value: `[Magic Eden](${newData.marketplace_url})`,
+          inline: true
+        });
+      }
+
+      // Agregar información adicional
+      const currency = newData?.currency || 'ETH';
+      embed.addFields({
+        name: '📊 Datos Actuales',
+        value: `Floor: ${(newData?.floor_price || 0).toFixed(2)} ${currency}\nVolume: ${(newData?.volume_24h || 0).toFixed(2)} ${currency}`,
+        inline: true
+      });
+
       // Intentar enviar al canal configurado
       if (serverConfig.rows.length > 0 && serverConfig.rows[0].alerts_channel_id) {
         try {
@@ -1074,6 +1150,16 @@ async function processAlert(alert, project, newData, guildId) {
           if (channel) {
             await channel.send({ embeds: [embed] });
             console.log(`🔔 processAlert: Notification sent to channel ${channel.name}!`);
+            
+            // Registrar alerta enviada para anti-spam
+            try {
+              await pool.query(
+                'INSERT INTO alert_history (project_id, alert_type, alert_value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+                [project.id, 'general', `alert_${Date.now()}`]
+              );
+            } catch (error) {
+              console.error('Error recording alert history:', error);
+            }
             return;
           }
         } catch (error) {
@@ -1085,6 +1171,16 @@ async function processAlert(alert, project, newData, guildId) {
       console.log(`🔔 processAlert: No channel configured, sending DM to user ${user.username}`);
       await user.send({ embeds: [embed] });
       console.log(`🔔 processAlert: Notification sent via DM successfully!`);
+      
+      // Registrar alerta enviada para anti-spam
+      try {
+        await pool.query(
+          'INSERT INTO alert_history (project_id, alert_type, alert_value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [project.id, 'general', `alert_${Date.now()}`]
+        );
+      } catch (error) {
+        console.error('Error recording alert history:', error);
+      }
     } else {
       console.log(`🔔 processAlert: No conditions met, no notification sent`);
     }
@@ -1119,6 +1215,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'test-api':
         await handleTestApiCommand(interaction);
         break;
+      case 'verify-price':
+        await handleVerifyPriceCommand(interaction);
+        break;
       case 'alerts':
         await handleAlertsCommand(interaction);
         break;
@@ -1143,8 +1242,11 @@ client.on('interactionCreate', async interaction => {
         interaction.commandName === 'floor' || 
         interaction.commandName === 'volume' ||
         interaction.commandName === 'delete' ||
+        interaction.commandName === 'verify-price' ||
         (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'setup') ||
-        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'disable')) {
+        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'disable') ||
+        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'enable') ||
+        (interaction.commandName === 'alerts' && interaction.options.getSubcommand() === 'remove')) {
       
       const projects = await getProjectsList();
       const filtered = projects
@@ -1604,6 +1706,9 @@ async function handleAlertsCommand(interaction) {
     case 'disable':
       await handleAlertsDisable(interaction);
       break;
+    case 'enable':
+      await handleAlertsEnable(interaction);
+      break;
     case 'remove':
       await handleAlertsRemove(interaction);
       break;
@@ -1878,6 +1983,28 @@ async function handleAlertsDisable(interaction) {
     await interaction.reply({ content: `✅ Alertas desactivadas para **${projectName}**`, flags: 64 });
   } catch (error) {
     console.error('Error in handleAlertsDisable:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Manejar reactivación de alertas
+async function handleAlertsEnable(interaction) {
+  const projectName = interaction.options.getString('project');
+
+  try {
+    const result = await pool.query(
+      'UPDATE user_alerts SET is_active = true FROM nft_projects WHERE user_alerts.project_id = nft_projects.id AND user_alerts.discord_user_id = $1 AND nft_projects.name = $2',
+      [interaction.user.id, projectName]
+    );
+
+    if (result.rowCount === 0) {
+      await interaction.reply({ content: '❌ No se encontraron alertas para reactivar.', flags: 64 });
+      return;
+    }
+
+    await interaction.reply({ content: `✅ Alertas reactivadas para **${projectName}**`, flags: 64 });
+  } catch (error) {
+    console.error('Error in handleAlertsEnable:', error);
     await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
@@ -2183,6 +2310,101 @@ async function handleDeleteCommand(interaction) {
     });
   } catch (error) {
     console.error('Error in handleDeleteCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar comando verify-price
+async function handleVerifyPriceCommand(interaction) {
+  const projectName = interaction.options.getString('project');
+
+  try {
+    await interaction.deferReply();
+    
+    // Buscar el proyecto
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+
+    // Obtener datos frescos de la API
+    const projectData = await getProjectData(project.contract_address);
+    
+    if (!projectData) {
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      return;
+    }
+
+    const currency = projectData.currency || 'ETH';
+    const floorPrice = projectData.floor_price || 0;
+    const priceUSD = projectData.price_usd || 0;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🔍 Verificación de Precio: ${project.name}`)
+      .setDescription('Datos obtenidos directamente de la API')
+      .setColor('#3B82F6')
+      .setTimestamp();
+
+    // Agregar imagen si está disponible
+    if (projectData.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    embed.addFields(
+      { 
+        name: '💰 Floor Price (API)', 
+        value: `${floorPrice.toFixed(2)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        inline: true 
+      },
+      { 
+        name: '📊 Volume 24h', 
+        value: `${(projectData.volume_24h || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '🛒 Sales', 
+        value: `${projectData.sales_count || 0}`, 
+        inline: true 
+      },
+      { 
+        name: '📋 Listings', 
+        value: `${projectData.listings_count || 0}`, 
+        inline: true 
+      },
+      { 
+        name: '🎯 Top Bid', 
+        value: `${(projectData.top_bid || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '📈 Avg Sale Price', 
+        value: `${(projectData.avg_sale_price || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      }
+    );
+
+    // Agregar información de la fuente
+    embed.addFields({
+      name: '🔗 Fuente',
+      value: `API: ${projectData.source || 'Unknown'}`,
+      inline: false
+    });
+
+    // Agregar link al marketplace si está disponible
+    if (projectData.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[Ver en Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleVerifyPriceCommand:', error);
     await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
