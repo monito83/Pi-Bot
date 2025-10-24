@@ -417,27 +417,15 @@ async function checkAlerts(project, projectData) {
               break;
               
             case 'floor_above':
-              console.log(`🔔 Checking floor_above: current=${projectData.floor_price} ${projectData.currency}, threshold=${alertConfig.threshold_value} ETH`);
-              console.log(`🔔 Currency mismatch check: projectData.currency=${projectData.currency}, threshold_type=${alertConfig.threshold_type}`);
+              console.log(`🔔 Checking floor_above: current=${projectData.floor_price} ${projectData.currency}, threshold=${alertConfig.threshold_value} ${projectData.currency}`);
               
               if (projectData.floor_price && alertConfig.threshold_value) {
-                // Convertir threshold si es necesario
-                let thresholdToCompare = alertConfig.threshold_value;
-                
-                // Si el proyecto es MON pero el threshold está en ETH, convertir
-                if (projectData.currency === 'MON' && alertConfig.threshold_type === 'absolute') {
-                  // Asumir que el threshold está en ETH pero el proyecto es MON
-                  // Convertir ETH a MON (1 ETH = 50 MON aproximadamente)
-                  thresholdToCompare = alertConfig.threshold_value * 50;
-                  console.log(`🔔 Converted threshold from ${alertConfig.threshold_value} ETH to ${thresholdToCompare} MON`);
-                }
-                
-                if (projectData.floor_price >= thresholdToCompare) {
-                  console.log(`🔔 FLOOR ABOVE TRIGGERED! Current: ${projectData.floor_price} ${projectData.currency} >= Threshold: ${thresholdToCompare} ${projectData.currency}`);
+                if (projectData.floor_price >= alertConfig.threshold_value) {
+                  console.log(`🔔 FLOOR ABOVE TRIGGERED! Current: ${projectData.floor_price} ${projectData.currency} >= Threshold: ${alertConfig.threshold_value} ${projectData.currency}`);
                   shouldNotify = true;
-                  message = `Floor price reached ${alertConfig.threshold_value} ETH (${projectData.floor_price} ${projectData.currency})`;
+                  message = `Floor price reached ${alertConfig.threshold_value} ${projectData.currency}`;
                 } else {
-                  console.log(`🔔 Floor above not triggered: ${projectData.floor_price} ${projectData.currency} < ${thresholdToCompare} ${projectData.currency}`);
+                  console.log(`🔔 Floor above not triggered: ${projectData.floor_price} ${projectData.currency} < ${alertConfig.threshold_value} ${projectData.currency}`);
                 }
               } else {
                 console.log(`🔔 Floor above check skipped: floor_price=${projectData.floor_price}, threshold_value=${alertConfig.threshold_value}`);
@@ -1483,7 +1471,10 @@ async function handleAlertsSetup(interaction) {
       );
     }
 
-    const thresholdDisplay = thresholdType === 'percentage' ? `${thresholdValue}%` : `${thresholdValue} ETH`;
+        // Obtener la moneda del proyecto para mostrar correctamente
+        const projectData = await getProjectData(project.contract_address);
+        const currency = projectData?.currency || 'ETH';
+        const thresholdDisplay = thresholdType === 'percentage' ? `${thresholdValue}%` : `${thresholdValue} ${currency}`;
     const embed = new EmbedBuilder()
       .setTitle('✅ Alerta Configurada')
       .setDescription(`Alerta configurada para **${projectName}**`)
