@@ -126,7 +126,7 @@ async function initializeAlertHistory() {
       // Crear índice único después de crear la tabla
       await pool.query(`
         CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
-        ON alert_history (project_id, alert_type, alert_value, DATE(sent_at))
+        ON alert_history (project_id, alert_type, alert_value, sent_at::date)
       `);
       
       console.log('✅ Alert history table created successfully');
@@ -162,7 +162,7 @@ setTimeout(async () => {
     
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
-      ON alert_history (project_id, alert_type, alert_value, DATE(sent_at))
+      ON alert_history (project_id, alert_type, alert_value, sent_at::date)
     `);
     
     console.log('✅ Alert history table force created successfully');
@@ -1094,7 +1094,7 @@ async function processAlert(alert, project, newData, guildId) {
           
           try {
             const existingAlert = await pool.query(
-              'SELECT id FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND DATE(sent_at) = $4',
+              'SELECT id FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND sent_at::date = $4',
               [project.id, alertConfig.type, alertKey, today]
             );
 
@@ -3635,7 +3635,7 @@ async function initializeAlertHistory() {
           alert_type VARCHAR(50) NOT NULL,
           alert_value VARCHAR(100) NOT NULL,
           created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(project_id, alert_type, alert_value, DATE(created_at))
+          UNIQUE(project_id, alert_type, alert_value, created_at::date)
         );
       `);
       
@@ -3840,7 +3840,7 @@ async function processAlert(project, projectData, alert, alertConfig) {
       const alertKey = `${alertConfig.type}_${alertConfig.threshold_value}`;
       
       const spamCheck = await pool.query(
-        'SELECT * FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND DATE(created_at) = $4',
+        'SELECT * FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND created_at::date = $4',
         [project.id, alertConfig.type, alertKey, today]
       );
       
@@ -4804,7 +4804,7 @@ setTimeout(async () => {
         alert_type VARCHAR(50) NOT NULL,
         alert_value VARCHAR(100) NOT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(project_id, alert_type, alert_value, DATE(created_at))
+        UNIQUE(project_id, alert_type, alert_value, created_at::date)
       );
     `);
     console.log('🔔 alert_history table force-created successfully');
