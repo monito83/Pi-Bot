@@ -100,3 +100,4 @@ GROUP BY p.id, p.name, p.contract_address, p.marketplace, p.status,
          p.last_listings_count, p.last_update;
 
 
+

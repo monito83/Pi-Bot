@@ -16,3 +16,4 @@ UNIQUE (discord_user_id, project_id);
 
 -- Step 5: Verify the table structure
 \d user_alerts;
+

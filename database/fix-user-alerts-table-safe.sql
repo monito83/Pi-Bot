@@ -38,3 +38,4 @@ ALTER TABLE user_alerts_new RENAME TO user_alerts;
 
 -- Step 5: Verify the table structure
 \d user_alerts;
+

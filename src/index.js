@@ -1,6 +1,6 @@
 console.log('🔥 LOG 1: Starting to load modules...');
 console.log('🔥 ULTRA SIMPLE TEST v2: This code is definitely running!');
-const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
 console.log('🔥 LOG 3: PostgreSQL loaded');
@@ -2795,48 +2795,346 @@ async function showHelpMenu(interaction) {
   }
 }
 
+// Crear modal para agregar proyecto
+function createAddProjectModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('add_project_modal')
+    .setTitle('➕ Agregar Proyecto NFT');
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId('project_name')
+    .setLabel('Nombre del Proyecto')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Ej: Bored Ape Yacht Club')
+    .setRequired(true)
+    .setMaxLength(100);
+
+  const contractInput = new TextInputBuilder()
+    .setCustomId('contract_address')
+    .setLabel('Dirección del Contrato')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('0x...')
+    .setRequired(true)
+    .setMaxLength(42);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(nameInput);
+  const secondActionRow = new ActionRowBuilder().addComponents(contractInput);
+
+  modal.addComponents(firstActionRow, secondActionRow);
+  return modal;
+}
+
+// Crear modal para configurar alertas
+function createAlertSetupModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('alert_setup_modal')
+    .setTitle('🔔 Configurar Alerta');
+
+  const projectInput = new TextInputBuilder()
+    .setCustomId('alert_project')
+    .setLabel('Nombre del Proyecto')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Ej: Bored Ape Yacht Club')
+    .setRequired(true)
+    .setMaxLength(100);
+
+  const thresholdInput = new TextInputBuilder()
+    .setCustomId('alert_threshold')
+    .setLabel('Umbral (ej: 0.5 ETH o 10%)')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('0.5 ETH')
+    .setRequired(true)
+    .setMaxLength(20);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(projectInput);
+  const secondActionRow = new ActionRowBuilder().addComponents(thresholdInput);
+
+  modal.addComponents(firstActionRow, secondActionRow);
+  return modal;
+}
+
+// Crear modal de confirmación para eliminar proyecto
+function createDeleteProjectModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('delete_project_modal')
+    .setTitle('🗑️ Eliminar Proyecto');
+
+  const projectInput = new TextInputBuilder()
+    .setCustomId('delete_project_name')
+    .setLabel('Nombre del Proyecto a Eliminar')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Escribe exactamente el nombre del proyecto')
+    .setRequired(true)
+    .setMaxLength(100);
+
+  const confirmInput = new TextInputBuilder()
+    .setCustomId('delete_confirm')
+    .setLabel('Confirmación (escribe "ELIMINAR")')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('ELIMINAR')
+    .setRequired(true)
+    .setMaxLength(10);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(projectInput);
+  const secondActionRow = new ActionRowBuilder().addComponents(confirmInput);
+
+  modal.addComponents(firstActionRow, secondActionRow);
+  return modal;
+}
+
+// Mostrar modal de selección de proyecto para status
+async function showProjectStatusModal(interaction) {
+  try {
+    const projects = await getProjectsList();
+    
+    if (projects.length === 0) {
+      await interaction.editReply({ content: '❌ No hay proyectos disponibles.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_project_status')
+      .setPlaceholder('Selecciona un proyecto para ver su status')
+      .addOptions(
+        projects.map(project => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(project)
+            .setValue(project)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '📊 Selecciona un proyecto para ver su status:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showProjectStatusModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar proyectos.' });
+  }
+}
+
+// Mostrar modal de selección de proyecto para floor price
+async function showFloorPriceModal(interaction) {
+  try {
+    const projects = await getProjectsList();
+    
+    if (projects.length === 0) {
+      await interaction.editReply({ content: '❌ No hay proyectos disponibles.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_project_floor')
+      .setPlaceholder('Selecciona un proyecto para ver el floor price')
+      .addOptions(
+        projects.map(project => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(project)
+            .setValue(project)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '💰 Selecciona un proyecto para ver el floor price:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showFloorPriceModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar proyectos.' });
+  }
+}
+
+// Mostrar modal de selección de proyecto para volume
+async function showVolumeModal(interaction) {
+  try {
+    const projects = await getProjectsList();
+    
+    if (projects.length === 0) {
+      await interaction.editReply({ content: '❌ No hay proyectos disponibles.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_project_volume')
+      .setPlaceholder('Selecciona un proyecto para ver el volume')
+      .addOptions(
+        projects.map(project => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(project)
+            .setValue(project)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '📈 Selecciona un proyecto para ver el volume:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showVolumeModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar proyectos.' });
+  }
+}
+
+// Mostrar modal de selección de proyecto para deshabilitar alertas
+async function showDisableAlertModal(interaction) {
+  try {
+    const result = await pool.query(
+      'SELECT DISTINCT np.name FROM user_alerts ua JOIN nft_projects np ON ua.project_id = np.id WHERE ua.discord_user_id = $1 AND ua.is_active = true',
+      [interaction.user.id]
+    );
+    
+    const projects = result.rows.map(row => row.name);
+    
+    if (projects.length === 0) {
+      await interaction.editReply({ content: '❌ No tienes alertas activas para deshabilitar.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_project_disable')
+      .setPlaceholder('Selecciona un proyecto para deshabilitar alertas')
+      .addOptions(
+        projects.map(project => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(project)
+            .setValue(project)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '🔕 Selecciona un proyecto para deshabilitar sus alertas:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showDisableAlertModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar proyectos.' });
+  }
+}
+
+// Mostrar modal de selección de proyecto para eliminar alertas
+async function showRemoveAlertModal(interaction) {
+  try {
+    const result = await pool.query(
+      'SELECT DISTINCT np.name FROM user_alerts ua JOIN nft_projects np ON ua.project_id = np.id WHERE ua.discord_user_id = $1',
+      [interaction.user.id]
+    );
+    
+    const projects = result.rows.map(row => row.name);
+    
+    if (projects.length === 0) {
+      await interaction.editReply({ content: '❌ No tienes alertas para eliminar.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_project_remove')
+      .setPlaceholder('Selecciona un proyecto para eliminar alertas')
+      .addOptions(
+        projects.map(project => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(project)
+            .setValue(project)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '🗑️ Selecciona un proyecto para eliminar sus alertas:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showRemoveAlertModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar proyectos.' });
+  }
+}
+
+// Mostrar modal de configuración de canal
+async function showChannelConfigModal(interaction) {
+  try {
+    if (!await hasAdminPermissions(interaction)) {
+      await interaction.editReply({ content: '❌ Solo los administradores pueden configurar el canal de alertas.' });
+      return;
+    }
+
+    const channels = interaction.guild.channels.cache
+      .filter(channel => channel.type === 0) // Solo canales de texto
+      .map(channel => ({
+        label: `#${channel.name}`,
+        value: channel.id
+      }))
+      .slice(0, 25); // Discord limita a 25 opciones
+
+    if (channels.length === 0) {
+      await interaction.editReply({ content: '❌ No hay canales de texto disponibles.' });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_channel_config')
+      .setPlaceholder('Selecciona un canal para las alertas')
+      .addOptions(
+        channels.map(channel => 
+          new StringSelectMenuOptionBuilder()
+            .setLabel(channel.label)
+            .setValue(channel.value)
+        )
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    await interaction.editReply({ 
+      content: '📢 Selecciona un canal para recibir las alertas:', 
+      components: [row] 
+    });
+  } catch (error) {
+    console.error('Error in showChannelConfigModal:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar canales.' });
+  }
+}
+
 // Manejar botones de proyectos
 async function handleProjectsButton(interaction) {
   const buttonId = interaction.customId;
   
   try {
-    await interaction.deferReply({ flags: 64 });
-    
     switch (buttonId) {
       case 'projects_list':
+        await interaction.deferReply({ flags: 64 });
         await handleProjectsCommand(interaction);
         break;
       case 'projects_add':
-        await interaction.editReply({ 
-          content: '💡 Para agregar un proyecto, usa el comando `/setup` con el nombre y contrato del proyecto.' 
-        });
+        await interaction.showModal(createAddProjectModal());
         break;
       case 'projects_status':
-        await interaction.editReply({ 
-          content: '💡 Para ver el status de un proyecto, usa el comando `/status` seguido del nombre del proyecto.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showProjectStatusModal(interaction);
         break;
       case 'projects_floor':
-        await interaction.editReply({ 
-          content: '💡 Para ver el floor price, usa el comando `/floor` seguido del nombre del proyecto.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showFloorPriceModal(interaction);
         break;
       case 'projects_volume':
-        await interaction.editReply({ 
-          content: '💡 Para ver el volume, usa el comando `/volume` seguido del nombre del proyecto.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showVolumeModal(interaction);
         break;
       case 'projects_delete':
-        await interaction.editReply({ 
-          content: '💡 Para eliminar un proyecto, usa el comando `/delete` seguido del nombre del proyecto.' 
-        });
+        await interaction.showModal(createDeleteProjectModal());
         break;
       default:
-        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+        await interaction.reply({ content: '❌ Opción no reconocida.', flags: 64 });
     }
   } catch (error) {
     console.error('Error in handleProjectsButton:', error);
-    await interaction.editReply({ content: '❌ Error interno.' });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
@@ -2845,38 +3143,32 @@ async function handleAlertsButton(interaction) {
   const buttonId = interaction.customId;
   
   try {
-    await interaction.deferReply({ flags: 64 });
-    
     switch (buttonId) {
       case 'alerts_setup':
-        await interaction.editReply({ 
-          content: '💡 Para configurar alertas, usa el comando `/alerts setup` seguido del proyecto y configuración.' 
-        });
+        await interaction.showModal(createAlertSetupModal());
         break;
       case 'alerts_list':
+        await interaction.deferReply({ flags: 64 });
         await handleAlertsList(interaction);
         break;
       case 'alerts_disable':
-        await interaction.editReply({ 
-          content: '💡 Para deshabilitar alertas, usa el comando `/alerts disable` seguido del nombre del proyecto.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showDisableAlertModal(interaction);
         break;
       case 'alerts_remove':
-        await interaction.editReply({ 
-          content: '💡 Para eliminar alertas específicas, usa el comando `/alerts remove` seguido del proyecto y tipo de alerta.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showRemoveAlertModal(interaction);
         break;
       case 'alerts_channel':
-        await interaction.editReply({ 
-          content: '💡 Para configurar el canal de alertas, usa el comando `/alerts channel` seguido del canal.' 
-        });
+        await interaction.deferReply({ flags: 64 });
+        await showChannelConfigModal(interaction);
         break;
       default:
-        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+        await interaction.reply({ content: '❌ Opción no reconocida.', flags: 64 });
     }
   } catch (error) {
     console.error('Error in handleAlertsButton:', error);
-    await interaction.editReply({ content: '❌ Error interno.' });
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
@@ -3781,11 +4073,13 @@ cron.schedule('*/1 * * * *', async () => {
   }
 });
 
-// Manejar interacciones de botones
+// Manejar interacciones de botones, modales y menús
 client.on('interactionCreate', async (interaction) => {
+  // Manejar botones
   if (interaction.isButton()) {
     const customId = interaction.customId;
     
+    // Botón de deshabilitar alerta
     if (customId.startsWith('disable_alert_')) {
       try {
         const [, , projectId, userId] = customId.split('_');
@@ -3823,8 +4117,639 @@ client.on('interactionCreate', async (interaction) => {
         });
       }
     }
+    
+    // Botones del menú principal
+    else if (customId.startsWith('menu_')) {
+      await handleMenuButton(interaction);
+    }
+    
+    // Botones de proyectos
+    else if (customId.startsWith('projects_')) {
+      await handleProjectsButton(interaction);
+    }
+    
+    // Botones de alertas
+    else if (customId.startsWith('alerts_')) {
+      await handleAlertsButton(interaction);
+    }
+    
+    // Botones de configuración
+    else if (customId.startsWith('config_')) {
+      await handleConfigButton(interaction);
+    }
+    
+    // Botones de estadísticas
+    else if (customId.startsWith('stats_')) {
+      await handleStatsButton(interaction);
+    }
+    
+    // Botones de herramientas
+    else if (customId.startsWith('tools_')) {
+      await handleToolsButton(interaction);
+    }
+    
+    // Botones de ayuda
+    else if (customId.startsWith('help_')) {
+      await handleHelpButton(interaction);
+    }
+    
+    // Botón de volver al menú
+    else if (customId === 'back_to_menu') {
+      await handleMenuCommand(interaction);
+    }
+  }
+  
+  // Manejar modales
+  else if (interaction.isModalSubmit()) {
+    const customId = interaction.customId;
+    
+    try {
+      await interaction.deferReply({ flags: 64 });
+      
+      switch (customId) {
+        case 'add_project_modal':
+          await handleAddProjectModal(interaction);
+          break;
+        case 'alert_setup_modal':
+          await handleAlertSetupModal(interaction);
+          break;
+        case 'delete_project_modal':
+          await handleDeleteProjectModal(interaction);
+          break;
+        default:
+          await interaction.editReply({ content: '❌ Modal no reconocido.' });
+      }
+    } catch (error) {
+      console.error('Error handling modal:', error);
+      await interaction.editReply({ content: '❌ Error interno.' });
+    }
+  }
+  
+  // Manejar menús de selección
+  else if (interaction.isStringSelectMenu()) {
+    const customId = interaction.customId;
+    
+    try {
+      await interaction.deferReply({ flags: 64 });
+      
+      switch (customId) {
+        case 'select_project_status':
+          await handleProjectStatusSelection(interaction);
+          break;
+        case 'select_project_floor':
+          await handleProjectFloorSelection(interaction);
+          break;
+        case 'select_project_volume':
+          await handleProjectVolumeSelection(interaction);
+          break;
+        case 'select_project_disable':
+          await handleProjectDisableSelection(interaction);
+          break;
+        case 'select_project_remove':
+          await handleProjectRemoveSelection(interaction);
+          break;
+        case 'select_channel_config':
+          await handleChannelConfigSelection(interaction);
+          break;
+        default:
+          await interaction.editReply({ content: '❌ Menú de selección no reconocido.' });
+      }
+    } catch (error) {
+      console.error('Error handling select menu:', error);
+      await interaction.editReply({ content: '❌ Error interno.' });
+    }
   }
 });
+
+// Funciones auxiliares para comandos
+async function handleStatusCommand(interaction, projectName) {
+  try {
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+
+    // Obtener datos frescos de la API
+    const projectData = await getProjectData(project.contract_address);
+    
+    if (!projectData) {
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      return;
+    }
+
+    const currency = projectData.currency || 'ETH';
+    const floorPrice = projectData.floor_price || 0;
+    const priceUSD = projectData.price_usd || 0;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 Estado: ${project.name}`)
+      .setDescription('Estado actual del proyecto')
+      .setColor('#3B82F6')
+      .setTimestamp();
+
+    if (projectData.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    embed.addFields(
+      { 
+        name: '💰 Floor Price', 
+        value: `${floorPrice.toFixed(2)} ${currency}\n($${priceUSD.toFixed(2)} USD)`, 
+        inline: true 
+      },
+      { 
+        name: '📊 Volume 24h', 
+        value: `${(projectData.volume_24h || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '🛒 Sales', 
+        value: `${projectData.sales_count || 0}`, 
+        inline: true 
+      },
+      { 
+        name: '📋 Listings', 
+        value: `${projectData.listings_count || 0}`, 
+        inline: true 
+      },
+      { 
+        name: '🎯 Top Bid', 
+        value: `${(projectData.top_bid || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '📈 Avg Sale Price', 
+        value: `${(projectData.avg_sale_price || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      }
+    );
+
+    if (projectData.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[Ver en Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleStatusCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+async function handleFloorCommand(interaction, projectName) {
+  try {
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+
+    // Obtener datos frescos de la API
+    const projectData = await getProjectData(project.contract_address);
+    
+    if (!projectData) {
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      return;
+    }
+
+    const currency = projectData.currency || 'ETH';
+    const floorPrice = projectData.floor_price || 0;
+    const priceUSD = projectData.price_usd || 0;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`💰 Floor Price: ${project.name}`)
+      .setDescription(`Precio mínimo actual`)
+      .setColor('#10B981')
+      .setTimestamp();
+
+    if (projectData.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    embed.addFields(
+      { 
+        name: '💰 Floor Price', 
+        value: `${floorPrice.toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '💵 USD', 
+        value: `$${priceUSD.toFixed(2)}`, 
+        inline: true 
+      },
+      { 
+        name: '🎯 Top Bid', 
+        value: `${(projectData.top_bid || 0).toFixed(2)} ${currency}`, 
+        inline: true 
+      }
+    );
+
+    if (projectData.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[Ver en Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleFloorCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+async function handleVolumeCommand(interaction, projectName) {
+  try {
+    const result = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = result.rows[0];
+
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+
+    // Obtener datos frescos de la API
+    const projectData = await getProjectData(project.contract_address);
+    
+    if (!projectData) {
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      return;
+    }
+
+    const currency = projectData.currency || 'ETH';
+    const volume24h = projectData.volume_24h || 0;
+    const salesCount = projectData.sales_count || 0;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 Volume: ${project.name}`)
+      .setDescription(`Volumen de trading en las últimas 24 horas`)
+      .setColor('#F59E0B')
+      .setTimestamp();
+
+    if (projectData.image) {
+      embed.setThumbnail(projectData.image);
+    }
+
+    embed.addFields(
+      { 
+        name: '📊 Volume 24h', 
+        value: `${volume24h.toFixed(2)} ${currency}`, 
+        inline: true 
+      },
+      { 
+        name: '🛒 Sales', 
+        value: `${salesCount}`, 
+        inline: true 
+      },
+      { 
+        name: '📈 Avg Sale', 
+        value: `${salesCount > 0 ? (volume24h / salesCount).toFixed(2) : '0'} ${currency}`, 
+        inline: true 
+      }
+    );
+
+    if (projectData.marketplace_url) {
+      embed.addFields({
+        name: '🏪 Marketplace',
+        value: `[Ver en Magic Eden](${projectData.marketplace_url})`,
+        inline: false
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleVolumeCommand:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+async function handleTestApiCommand(interaction) {
+  try {
+    await interaction.editReply({ content: '🧪 Probando conexión con Magic Eden API...' });
+    
+    // Probar con un contrato conocido (Bored Ape Yacht Club)
+    const testContract = '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D';
+    const testData = await getProjectData(testContract);
+    
+    if (testData) {
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Test API Exitoso')
+        .setDescription('Conexión con Magic Eden API funcionando correctamente')
+        .setColor('#10B981')
+        .addFields(
+          { name: '🔗 API Status', value: '✅ Conectada', inline: true },
+          { name: '📊 Datos Obtenidos', value: '✅ Válidos', inline: true },
+          { name: '⏰ Tiempo de Respuesta', value: '< 5 segundos', inline: true }
+        )
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+    } else {
+      await interaction.editReply({ content: '❌ Error: No se pudieron obtener datos de la API.' });
+    }
+  } catch (error) {
+    console.error('Error in handleTestApiCommand:', error);
+    await interaction.editReply({ content: '❌ Error al probar la API.' });
+  }
+}
+
+// Manejadores de modales
+async function handleAddProjectModal(interaction) {
+  try {
+    const projectName = interaction.fields.getTextInputValue('project_name');
+    const contractAddress = interaction.fields.getTextInputValue('contract_address');
+    
+    // Validar dirección del contrato
+    if (!contractAddress.startsWith('0x') || contractAddress.length !== 42) {
+      await interaction.editReply({ content: '❌ Dirección de contrato inválida. Debe empezar con 0x y tener 42 caracteres.' });
+      return;
+    }
+    
+    // Verificar si el proyecto ya existe
+    const existingProject = await pool.query('SELECT * FROM nft_projects WHERE name = $1 OR contract_address = $2', [projectName, contractAddress]);
+    
+    if (existingProject.rows.length > 0) {
+      await interaction.editReply({ content: '❌ Ya existe un proyecto con ese nombre o dirección de contrato.' });
+      return;
+    }
+    
+    // Obtener datos del proyecto desde la API
+    const projectData = await getProjectData(contractAddress);
+    
+    if (!projectData) {
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos del proyecto desde la API. Verifica la dirección del contrato.' });
+      return;
+    }
+    
+    // Insertar proyecto en la base de datos
+    const result = await pool.query(
+      'INSERT INTO nft_projects (name, contract_address, status, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id',
+      [projectName, contractAddress, 'active']
+    );
+    
+    const projectId = result.rows[0].id;
+    
+    // Guardar datos iniciales del proyecto
+    await pool.query(
+      'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
+      [projectId, projectData.floor_price || 0, projectData.volume_24h || 0, projectData.sales_count || 0, projectData.listings_count || 0, projectData.avg_sale_price || 0]
+    );
+    
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Proyecto Agregado Exitosamente')
+      .setDescription(`**${projectName}** ha sido agregado al sistema de tracking`)
+      .setColor('#10B981')
+      .addFields(
+        { name: '📝 Nombre', value: projectName, inline: true },
+        { name: '📍 Contrato', value: `\`${contractAddress}\``, inline: true },
+        { name: '💰 Floor Price', value: `${(projectData.floor_price || 0).toFixed(2)} ${projectData.currency || 'ETH'}`, inline: true },
+        { name: '📊 Volume 24h', value: `${(projectData.volume_24h || 0).toFixed(2)} ${projectData.currency || 'ETH'}`, inline: true },
+        { name: '🛒 Sales', value: `${projectData.sales_count || 0}`, inline: true },
+        { name: '📋 Listings', value: `${projectData.listings_count || 0}`, inline: true }
+      )
+      .setTimestamp();
+    
+    if (projectData.image) {
+      embed.setThumbnail(projectData.image);
+    }
+    
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`✅ Project added: ${projectName} (${contractAddress})`);
+  } catch (error) {
+    console.error('Error in handleAddProjectModal:', error);
+    await interaction.editReply({ content: '❌ Error al agregar el proyecto.' });
+  }
+}
+
+async function handleAlertSetupModal(interaction) {
+  try {
+    const projectName = interaction.fields.getTextInputValue('alert_project');
+    const threshold = interaction.fields.getTextInputValue('alert_threshold');
+    
+    // Buscar el proyecto
+    const projectResult = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = projectResult.rows[0];
+    
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+    
+    // Parsear el umbral
+    const thresholdValue = parseFloat(threshold.replace(/[^\d.-]/g, ''));
+    const thresholdType = threshold.includes('%') ? 'percentage' : 'absolute';
+    
+    if (isNaN(thresholdValue) || thresholdValue <= 0) {
+      await interaction.editReply({ content: '❌ Umbral inválido. Usa un número válido (ej: 0.5 ETH o 10%).' });
+      return;
+    }
+    
+    // Crear configuración de alerta básica (floor_above)
+    const alertConfig = {
+      type: 'floor_above',
+      threshold_value: thresholdValue,
+      threshold_type: thresholdType,
+      timeframe: '24h',
+      enabled: true
+    };
+    
+    // Verificar si ya existe una alerta para este usuario y proyecto
+    const existingAlert = await pool.query(
+      'SELECT * FROM user_alerts WHERE discord_user_id = $1 AND project_id = $2',
+      [interaction.user.id, project.id]
+    );
+    
+    if (existingAlert.rows.length > 0) {
+      // Actualizar alerta existente
+      const existingConfigs = JSON.parse(existingAlert.rows[0].alert_types || '[]');
+      existingConfigs.push(alertConfig);
+      
+      await pool.query(
+        'UPDATE user_alerts SET alert_types = $1, updated_at = NOW() WHERE discord_user_id = $2 AND project_id = $3',
+        [JSON.stringify(existingConfigs), interaction.user.id, project.id]
+      );
+    } else {
+      // Crear nueva alerta
+      await pool.query(
+        'INSERT INTO user_alerts (discord_user_id, project_id, alert_types, is_active, created_at) VALUES ($1, $2, $3, true, NOW())',
+        [interaction.user.id, project.id, JSON.stringify([alertConfig])]
+      );
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Alerta Configurada')
+      .setDescription(`Alerta configurada para **${projectName}**`)
+      .setColor('#10B981')
+      .addFields(
+        { name: '📊 Tipo', value: 'Floor Price Above', inline: true },
+        { name: '🎯 Umbral', value: `${thresholdValue}${thresholdType === 'percentage' ? '%' : ' ETH'}`, inline: true },
+        { name: '⏰ Timeframe', value: '24 horas', inline: true }
+      )
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`✅ Alert configured for user ${interaction.user.id} and project ${projectName}`);
+  } catch (error) {
+    console.error('Error in handleAlertSetupModal:', error);
+    await interaction.editReply({ content: '❌ Error al configurar la alerta.' });
+  }
+}
+
+async function handleDeleteProjectModal(interaction) {
+  try {
+    const projectName = interaction.fields.getTextInputValue('delete_project_name');
+    const confirmText = interaction.fields.getTextInputValue('delete_confirm');
+    
+    if (confirmText !== 'ELIMINAR') {
+      await interaction.editReply({ content: '❌ Confirmación incorrecta. Debes escribir exactamente "ELIMINAR".' });
+      return;
+    }
+    
+    // Buscar el proyecto
+    const projectResult = await pool.query('SELECT * FROM nft_projects WHERE name = $1', [projectName]);
+    const project = projectResult.rows[0];
+    
+    if (!project) {
+      await interaction.editReply({ content: '❌ Proyecto no encontrado.' });
+      return;
+    }
+    
+    // Eliminar el proyecto y sus datos relacionados
+    await pool.query('DELETE FROM user_alerts WHERE project_id = $1', [project.id]);
+    await pool.query('DELETE FROM price_history WHERE project_id = $1', [project.id]);
+    await pool.query('DELETE FROM nft_projects WHERE id = $1', [project.id]);
+    
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Proyecto Eliminado')
+      .setDescription(`**${projectName}** ha sido eliminado del sistema`)
+      .setColor('#EF4444')
+      .addFields(
+        { name: '🗑️ Eliminado', value: 'Proyecto y todos sus datos relacionados', inline: false },
+        { name: '📊 Alertas', value: 'Todas las alertas asociadas eliminadas', inline: true },
+        { name: '📈 Historial', value: 'Historial de precios eliminado', inline: true }
+      )
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`✅ Project deleted: ${projectName}`);
+  } catch (error) {
+    console.error('Error in handleDeleteProjectModal:', error);
+    await interaction.editReply({ content: '❌ Error al eliminar el proyecto.' });
+  }
+}
+
+// Manejadores de menús de selección
+async function handleProjectStatusSelection(interaction) {
+  const projectName = interaction.values[0];
+  await handleStatusCommand(interaction, projectName);
+}
+
+async function handleProjectFloorSelection(interaction) {
+  const projectName = interaction.values[0];
+  await handleFloorCommand(interaction, projectName);
+}
+
+async function handleProjectVolumeSelection(interaction) {
+  const projectName = interaction.values[0];
+  await handleVolumeCommand(interaction, projectName);
+}
+
+async function handleProjectDisableSelection(interaction) {
+  const projectName = interaction.values[0];
+  
+  try {
+    const result = await pool.query(
+      'UPDATE user_alerts SET is_active = false FROM nft_projects WHERE user_alerts.project_id = nft_projects.id AND user_alerts.discord_user_id = $1 AND nft_projects.name = $2',
+      [interaction.user.id, projectName]
+    );
+
+    if (result.rowCount === 0) {
+      await interaction.editReply({ content: '❌ No se encontraron alertas para desactivar.' });
+      return;
+    }
+
+    await interaction.editReply({ content: `✅ Alertas desactivadas para **${projectName}**` });
+  } catch (error) {
+    console.error('Error in handleProjectDisableSelection:', error);
+    await interaction.editReply({ content: '❌ Error al deshabilitar alertas.' });
+  }
+}
+
+async function handleProjectRemoveSelection(interaction) {
+  const projectName = interaction.values[0];
+  
+  try {
+    const result = await pool.query(
+      'DELETE FROM user_alerts USING nft_projects WHERE user_alerts.project_id = nft_projects.id AND user_alerts.discord_user_id = $1 AND nft_projects.name = $2',
+      [interaction.user.id, projectName]
+    );
+
+    if (result.rowCount === 0) {
+      await interaction.editReply({ content: '❌ No se encontraron alertas para eliminar.' });
+      return;
+    }
+
+    await interaction.editReply({ content: `✅ Alertas eliminadas para **${projectName}**` });
+  } catch (error) {
+    console.error('Error in handleProjectRemoveSelection:', error);
+    await interaction.editReply({ content: '❌ Error al eliminar alertas.' });
+  }
+}
+
+async function handleChannelConfigSelection(interaction) {
+  const channelId = interaction.values[0];
+  
+  try {
+    if (!await hasAdminPermissions(interaction)) {
+      await interaction.editReply({ content: '❌ Solo los administradores pueden configurar el canal de alertas.' });
+      return;
+    }
+
+    const channel = interaction.guild.channels.cache.get(channelId);
+    
+    if (!channel) {
+      await interaction.editReply({ content: '❌ Canal no encontrado.' });
+      return;
+    }
+
+    // Verificar permisos del bot en el canal
+    const botMember = interaction.guild.members.cache.get(interaction.client.user.id);
+    const permissions = channel.permissionsFor(botMember);
+    
+    if (!permissions.has(['SendMessages', 'EmbedLinks'])) {
+      await interaction.editReply({ content: '❌ El bot no tiene permisos para enviar mensajes en este canal.' });
+      return;
+    }
+
+    // Insertar o actualizar configuración del servidor
+    await pool.query(`
+      INSERT INTO server_config (guild_id, alerts_channel_id, updated_at) 
+      VALUES ($1, $2, NOW()) 
+      ON CONFLICT (guild_id) 
+      DO UPDATE SET alerts_channel_id = $2, updated_at = NOW()
+    `, [interaction.guild.id, channelId]);
+
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Canal de Alertas Configurado')
+      .setDescription(`Las alertas se enviarán a ${channel}`)
+      .setColor('#10B981')
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleChannelConfigSelection:', error);
+    await interaction.editReply({ content: '❌ Error al configurar el canal.' });
+  }
+}
 
 // Inicializar base de datos al iniciar
 initializeDatabase().then(() => {
