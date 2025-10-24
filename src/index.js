@@ -12,6 +12,9 @@ console.log('🚀 Node version:', process.version);
 console.log('🚀 Environment:', process.env.NODE_ENV || 'development');
 console.log('🚀 ================================================');
 
+// 🔥 ULTRA SIMPLE TEST LOG
+console.log('🔥 ULTRA SIMPLE TEST: This code is definitely running!');
+
 // Crear servidor Express para healthcheck
 const app = express();
 const PORT = process.env.PORT || 3000;
