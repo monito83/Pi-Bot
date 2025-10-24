@@ -98,19 +98,45 @@ async function initializeServerConfig() {
 // Crear tabla de alertas enviadas para anti-spam
 async function initializeAlertHistory() {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS alert_history (
-        id SERIAL PRIMARY KEY,
-        project_id INTEGER NOT NULL REFERENCES nft_projects(id),
-        alert_type TEXT NOT NULL,
-        alert_value TEXT NOT NULL,
-        sent_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(project_id, alert_type, alert_value, DATE(sent_at))
-      )
+    console.log('🔧 Initializing alert_history table...');
+    
+    // Primero verificar si la tabla existe
+    const checkTable = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'alert_history'
+      );
     `);
-    console.log('✅ Alert history table initialized');
+    
+    console.log('🔧 Table exists check result:', checkTable.rows[0].exists);
+    
+    if (!checkTable.rows[0].exists) {
+      console.log('🔧 Creating alert_history table...');
+      await pool.query(`
+        CREATE TABLE alert_history (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER NOT NULL REFERENCES nft_projects(id),
+          alert_type TEXT NOT NULL,
+          alert_value TEXT NOT NULL,
+          sent_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      
+      // Crear índice único después de crear la tabla
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
+        ON alert_history (project_id, alert_type, alert_value, DATE(sent_at))
+      `);
+      
+      console.log('✅ Alert history table created successfully');
+    } else {
+      console.log('✅ Alert history table already exists');
+    }
   } catch (error) {
-    console.error('Error initializing alert history table:', error);
+    console.error('❌ Error initializing alert history table:', error);
+    console.error('❌ Error details:', error.message);
+    console.error('❌ Error code:', error.code);
   }
 }
 
@@ -1029,14 +1055,19 @@ async function processAlert(alert, project, newData, guildId) {
           const alertKey = `${alertConfig.type}_${alertConfig.threshold_value}`;
           const today = new Date().toISOString().split('T')[0];
           
-          const existingAlert = await pool.query(
-            'SELECT id FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND DATE(sent_at) = $4',
-            [project.id, alertConfig.type, alertKey, today]
-          );
+          try {
+            const existingAlert = await pool.query(
+              'SELECT id FROM alert_history WHERE project_id = $1 AND alert_type = $2 AND alert_value = $3 AND DATE(sent_at) = $4',
+              [project.id, alertConfig.type, alertKey, today]
+            );
 
-          if (existingAlert.rows.length > 0) {
-            console.log(`🔔 processAlert: Alert already sent today, skipping to prevent spam`);
-            continue;
+            if (existingAlert.rows.length > 0) {
+              console.log(`🔔 processAlert: Alert already sent today, skipping to prevent spam`);
+              continue;
+            }
+          } catch (error) {
+            console.log(`🔔 processAlert: Error checking alert history (table might not exist yet):`, error.message);
+            // Continuar sin anti-spam si la tabla no existe
           }
 
       // Verificar floor price
@@ -1153,12 +1184,14 @@ async function processAlert(alert, project, newData, guildId) {
             
             // Registrar alerta enviada para anti-spam
             try {
+              const alertKey = `${alertConfig.type}_${alertConfig.threshold_value}`;
               await pool.query(
                 'INSERT INTO alert_history (project_id, alert_type, alert_value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-                [project.id, 'general', `alert_${Date.now()}`]
+                [project.id, alertConfig.type, alertKey]
               );
+              console.log(`🔔 processAlert: Alert recorded in history for anti-spam`);
             } catch (error) {
-              console.error('Error recording alert history:', error);
+              console.log(`🔔 processAlert: Error recording alert history (table might not exist yet):`, error.message);
             }
             return;
           }
@@ -1174,12 +1207,14 @@ async function processAlert(alert, project, newData, guildId) {
       
       // Registrar alerta enviada para anti-spam
       try {
+        const alertKey = `${alertConfig.type}_${alertConfig.threshold_value}`;
         await pool.query(
           'INSERT INTO alert_history (project_id, alert_type, alert_value) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-          [project.id, 'general', `alert_${Date.now()}`]
+          [project.id, alertConfig.type, alertKey]
         );
+        console.log(`🔔 processAlert: Alert recorded in history for anti-spam`);
       } catch (error) {
-        console.error('Error recording alert history:', error);
+        console.log(`🔔 processAlert: Error recording alert history (table might not exist yet):`, error.message);
       }
     } else {
       console.log(`🔔 processAlert: No conditions met, no notification sent`);
