@@ -246,14 +246,15 @@ client.once('ready', () => {
 
 // Programar tracking automático
 function scheduleTracking() {
-  cron.schedule('*/5 * * * *', async () => {
+  // Programar tracking automático cada 1 minuto (TEMPORAL PARA DEBUG)
+  cron.schedule('*/1 * * * *', async () => {
     console.log('🔄 Ejecutando tracking automático...');
     await performTracking();
   }, {
     timezone: "America/New_York"
   });
 
-  console.log('⏰ Tracking automático programado cada 5 minutos');
+  console.log('⏰ Tracking automático programado cada 1 minuto (DEBUG MODE)');
 }
 
 // Realizar tracking de todos los proyectos
