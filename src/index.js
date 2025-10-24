@@ -366,45 +366,28 @@ async function savePriceHistoryIfChanged(projectId, projectData) {
 
 // Verificar alertas (basado en el sistema de WL Manager)
 async function checkAlerts(project, projectData) {
-  console.log(`🔔 LOG 1: ENTERING checkAlerts function for ${project.name}`);
-  console.log(`🔔 LOG 2: Project ID: ${project.id}`);
-  console.log(`🔔 LOG 3: Project data exists: ${!!projectData}`);
-  console.log(`🔔 LOG 4: Project data:`, projectData);
-  console.log(`🔔 LOG 5: About to start try block for ${project.name}`);
+  console.log(`🔔 SIMPLE: Starting checkAlerts for ${project.name} (ID: ${project.id})`);
   
   try {
-    console.log(`🔔 LOG 6: Inside try block for ${project.name}`);
-    console.log(`🔔 LOG 7: ===== CHECKING ALERTS FOR ${project.name.toUpperCase()} =====`);
-    console.log(`🔔 LOG 8: Project ID: ${project.id}`);
-    console.log(`🔔 LOG 9: Project data:`, {
-      floor_price: projectData.floor_price,
-      volume_24h: projectData.volume_24h,
-      sales_count: projectData.sales_count,
-      listings_count: projectData.listings_count,
-      currency: projectData.currency
-    });
-
     // Obtener alertas activas para este proyecto
-    console.log(`🔔 LOG 10: Querying database for alerts...`);
     const result = await pool.query(
       'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
       [project.id]
     );
-    console.log(`🔔 LOG 11: Database query result: ${result.rows.length} alerts found`);
-    console.log(`🔔 LOG 12: Found ${result.rows.length} active alerts for project ${project.name}`);
+    
+    console.log(`🔔 SIMPLE: Found ${result.rows.length} active alerts for project ${project.name}`);
 
     if (result.rows.length === 0) {
-      console.log(`🔔 LOG 13: No active alerts found for project ${project.name}`);
+      console.log(`🔔 SIMPLE: No active alerts found for project ${project.name}`);
       return;
     }
 
-    console.log(`🔔 LOG 14: Starting to process ${result.rows.length} alerts`);
+    console.log(`🔔 SIMPLE: Processing ${result.rows.length} alerts`);
     for (const alert of result.rows) {
       try {
-        console.log(`🔔 LOG 15: Processing alert for user ${alert.discord_user_id}`);
-        console.log(`🔔 LOG 16: Alert data:`, alert);
+        console.log(`🔔 SIMPLE: Processing alert for user ${alert.discord_user_id}`);
         const alertConfigs = JSON.parse(alert.alert_types || '[]');
-        console.log(`🔔 LOG 17: Alert configs:`, alertConfigs);
+        console.log(`🔔 SIMPLE: Alert configs:`, alertConfigs);
         
         let shouldNotify = false;
         let message = '';
