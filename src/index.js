@@ -377,7 +377,11 @@ const commands = [
       option.setName('project')
         .setDescription('Nombre del proyecto a eliminar')
         .setRequired(true)
-        .setAutocomplete(true))
+        .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
+    .setName('menu')
+    .setDescription('Mostrar menú principal con botones interactivos')
 ];
 
 // Registrar comandos
@@ -1298,6 +1302,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'delete':
         await handleDeleteCommand(interaction);
         break;
+      case 'menu':
+        await handleMenuCommand(interaction);
+        break;
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
@@ -1369,6 +1376,30 @@ client.on('interactionCreate', async interaction => {
         content: `✅ Alertas deshabilitadas para **${projectName}**`, 
         flags: 64 
       });
+    } else if (interaction.customId.startsWith('menu_')) {
+      // Manejar botones del menú principal
+      await handleMenuButton(interaction);
+    } else if (interaction.customId === 'back_to_menu') {
+      // Volver al menú principal
+      await handleMenuCommand(interaction);
+    } else if (interaction.customId.startsWith('projects_')) {
+      // Manejar botones de proyectos
+      await handleProjectsButton(interaction);
+    } else if (interaction.customId.startsWith('alerts_')) {
+      // Manejar botones de alertas
+      await handleAlertsButton(interaction);
+    } else if (interaction.customId.startsWith('config_')) {
+      // Manejar botones de configuración
+      await handleConfigButton(interaction);
+    } else if (interaction.customId.startsWith('stats_')) {
+      // Manejar botones de estadísticas
+      await handleStatsButton(interaction);
+    } else if (interaction.customId.startsWith('tools_')) {
+      // Manejar botones de herramientas
+      await handleToolsButton(interaction);
+    } else if (interaction.customId.startsWith('help_')) {
+      // Manejar botones de ayuda
+      await handleHelpButton(interaction);
     }
   } catch (error) {
     console.error('Error handling button interaction:', error);
@@ -2398,6 +2429,630 @@ async function validateProject(contractAddress) {
       valid: false,
       error: 'Error interno al validar el proyecto.'
     };
+  }
+}
+
+// Manejar botones del menú
+async function handleMenuButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 }); // Ephemeral response
+    
+    switch (buttonId) {
+      case 'menu_projects':
+        await showProjectsMenu(interaction);
+        break;
+      case 'menu_alerts':
+        await showAlertsMenu(interaction);
+        break;
+      case 'menu_config':
+        await showConfigMenu(interaction);
+        break;
+      case 'menu_stats':
+        await showStatsMenu(interaction);
+        break;
+      case 'menu_tools':
+        await showToolsMenu(interaction);
+        break;
+      case 'menu_help':
+        await showHelpMenu(interaction);
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleMenuButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Mostrar menú de proyectos
+async function showProjectsMenu(interaction) {
+  try {
+    // Obtener lista de proyectos
+    const projects = await getProjectsList();
+    
+    const embed = new EmbedBuilder()
+      .setTitle('📊 Gestión de Proyectos')
+      .setDescription('Selecciona una acción para gestionar proyectos NFT:')
+      .setColor('#10B981')
+      .setTimestamp();
+
+    if (projects.length > 0) {
+      embed.addFields({
+        name: '📋 Proyectos Actuales',
+        value: projects.slice(0, 10).map((p, i) => `${i + 1}. **${p}**`).join('\n') + 
+               (projects.length > 10 ? `\n... y ${projects.length - 10} más` : ''),
+        inline: false
+      });
+    } else {
+      embed.addFields({
+        name: '📋 Proyectos Actuales',
+        value: 'No hay proyectos configurados',
+        inline: false
+      });
+    }
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('projects_list')
+          .setLabel('📋 Listar Proyectos')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('projects_add')
+          .setLabel('➕ Agregar Proyecto')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('projects_status')
+          .setLabel('📊 Ver Status')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('projects_floor')
+          .setLabel('💰 Floor Price')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('projects_volume')
+          .setLabel('📈 Volume')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('projects_delete')
+          .setLabel('🗑️ Eliminar')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    const row3 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1, row2, row3] 
+    });
+  } catch (error) {
+    console.error('Error in showProjectsMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar menú de proyectos.' });
+  }
+}
+
+// Mostrar menú de alertas
+async function showAlertsMenu(interaction) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle('🔔 Gestión de Alertas')
+      .setDescription('Configura y gestiona alertas de precios para tus proyectos NFT:')
+      .setColor('#F59E0B')
+      .setTimestamp()
+      .addFields(
+        { name: '🔔 Tipos de Alertas', value: '• Floor Price Change\n• Volume Change\n• Sales Count Change\n• Listings Change', inline: true },
+        { name: '⏰ Timeframes', value: '• 1 hora\n• 24 horas\n• 7 días\n• 30 días', inline: true },
+        { name: '🎯 Umbrales', value: '• Porcentuales (%)\n• Absolutos (ETH)', inline: true }
+      );
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('alerts_setup')
+          .setLabel('⚙️ Configurar Alerta')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('alerts_list')
+          .setLabel('📋 Mis Alertas')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('alerts_disable')
+          .setLabel('🔕 Deshabilitar')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('alerts_remove')
+          .setLabel('🗑️ Eliminar Alerta')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('alerts_channel')
+          .setLabel('📢 Canal de Alertas')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1, row2] 
+    });
+  } catch (error) {
+    console.error('Error in showAlertsMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar menú de alertas.' });
+  }
+}
+
+// Mostrar menú de configuración
+async function showConfigMenu(interaction) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle('⚙️ Configuración del Servidor')
+      .setDescription('Configura los permisos y canales del bot:')
+      .setColor('#8B5CF6')
+      .setTimestamp()
+      .addFields(
+        { name: '📢 Canal de Alertas', value: 'Configura un canal específico para recibir alertas', inline: true },
+        { name: '👥 Roles Permitidos', value: 'Define qué roles pueden usar el bot', inline: true },
+        { name: '🔧 Configuración General', value: 'Ajustes generales del servidor', inline: true }
+      );
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('config_channel')
+          .setLabel('📢 Canal de Alertas')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('config_role')
+          .setLabel('👥 Roles')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('config_status')
+          .setLabel('📊 Estado')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1, row2] 
+    });
+  } catch (error) {
+    console.error('Error in showConfigMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar menú de configuración.' });
+  }
+}
+
+// Mostrar menú de estadísticas
+async function showStatsMenu(interaction) {
+  try {
+    // Obtener estadísticas básicas
+    const projectsResult = await pool.query('SELECT COUNT(*) as count FROM nft_projects WHERE status = $1', ['active']);
+    const alertsResult = await pool.query('SELECT COUNT(*) as count FROM user_alerts WHERE is_active = true');
+    const historyResult = await pool.query('SELECT COUNT(*) as count FROM price_history');
+
+    const embed = new EmbedBuilder()
+      .setTitle('📈 Estadísticas del Bot')
+      .setDescription('Estadísticas generales del sistema de tracking:')
+      .setColor('#06B6D4')
+      .setTimestamp()
+      .addFields(
+        { name: '📊 Proyectos Activos', value: `${projectsResult.rows[0].count}`, inline: true },
+        { name: '🔔 Alertas Activas', value: `${alertsResult.rows[0].count}`, inline: true },
+        { name: '📈 Registros Históricos', value: `${historyResult.rows[0].count}`, inline: true },
+        { name: '⏰ Última Actualización', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+        { name: '🔄 Frecuencia de Tracking', value: 'Cada 1 minuto', inline: true },
+        { name: '🌐 Estado del Bot', value: '🟢 Activo', inline: true }
+      );
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('stats_projects')
+          .setLabel('📊 Detalles Proyectos')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('stats_alerts')
+          .setLabel('🔔 Detalles Alertas')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('stats_history')
+          .setLabel('📈 Historial')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1, row2] 
+    });
+  } catch (error) {
+    console.error('Error in showStatsMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar estadísticas.' });
+  }
+}
+
+// Mostrar menú de herramientas
+async function showToolsMenu(interaction) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle('🔧 Herramientas y Debugging')
+      .setDescription('Herramientas adicionales para testing y debugging:')
+      .setColor('#EF4444')
+      .setTimestamp()
+      .addFields(
+        { name: '🔍 Verificar Precios', value: 'Obtener datos frescos de la API', inline: true },
+        { name: '🧪 Test API', value: 'Probar conexión con Magic Eden', inline: true },
+        { name: '📊 Debug Info', value: 'Información técnica del bot', inline: true }
+      );
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('tools_verify')
+          .setLabel('🔍 Verificar Precios')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('tools_test')
+          .setLabel('🧪 Test API')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('tools_debug')
+          .setLabel('📊 Debug Info')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1, row2] 
+    });
+  } catch (error) {
+    console.error('Error in showToolsMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar herramientas.' });
+  }
+}
+
+// Mostrar menú de ayuda
+async function showHelpMenu(interaction) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle('ℹ️ Ayuda y Comandos')
+      .setDescription('Información sobre cómo usar el bot NFT Tracking:')
+      .setColor('#84CC16')
+      .setTimestamp()
+      .addFields(
+        { name: '🤖 Comandos Principales', value: '• `/menu` - Menú principal con botones\n• `/setup` - Agregar proyecto\n• `/status` - Ver estado de proyecto', inline: false },
+        { name: '🔔 Comandos de Alertas', value: '• `/alerts setup` - Configurar alerta\n• `/alerts list` - Ver mis alertas\n• `/alerts disable` - Deshabilitar alertas', inline: false },
+        { name: '📊 Comandos de Datos', value: '• `/floor` - Floor price\n• `/volume` - Volume 24h\n• `/projects` - Listar proyectos', inline: false },
+        { name: '🔧 Comandos de Debug', value: '• `/test-api` - Probar API\n• `/verify-price` - Verificar precios\n• `/delete` - Eliminar proyecto', inline: false },
+        { name: '💡 Consejos', value: '• Usa `/menu` para navegación fácil\n• Las alertas se envían por DM o canal configurado\n• El bot actualiza datos cada minuto', inline: false }
+      )
+      .setFooter({ text: 'Para más ayuda, contacta al administrador del servidor' });
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('help_commands')
+          .setLabel('📋 Lista Completa')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('help_examples')
+          .setLabel('💡 Ejemplos')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('back_to_menu')
+          .setLabel('🔙 Volver al Menú')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [row1] 
+    });
+  } catch (error) {
+    console.error('Error in showHelpMenu:', error);
+    await interaction.editReply({ content: '❌ Error al mostrar ayuda.' });
+  }
+}
+
+// Manejar botones de proyectos
+async function handleProjectsButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'projects_list':
+        await handleProjectsCommand(interaction);
+        break;
+      case 'projects_add':
+        await interaction.editReply({ 
+          content: '💡 Para agregar un proyecto, usa el comando `/setup` con el nombre y contrato del proyecto.' 
+        });
+        break;
+      case 'projects_status':
+        await interaction.editReply({ 
+          content: '💡 Para ver el status de un proyecto, usa el comando `/status` seguido del nombre del proyecto.' 
+        });
+        break;
+      case 'projects_floor':
+        await interaction.editReply({ 
+          content: '💡 Para ver el floor price, usa el comando `/floor` seguido del nombre del proyecto.' 
+        });
+        break;
+      case 'projects_volume':
+        await interaction.editReply({ 
+          content: '💡 Para ver el volume, usa el comando `/volume` seguido del nombre del proyecto.' 
+        });
+        break;
+      case 'projects_delete':
+        await interaction.editReply({ 
+          content: '💡 Para eliminar un proyecto, usa el comando `/delete` seguido del nombre del proyecto.' 
+        });
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleProjectsButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar botones de alertas
+async function handleAlertsButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'alerts_setup':
+        await interaction.editReply({ 
+          content: '💡 Para configurar alertas, usa el comando `/alerts setup` seguido del proyecto y configuración.' 
+        });
+        break;
+      case 'alerts_list':
+        await handleAlertsList(interaction);
+        break;
+      case 'alerts_disable':
+        await interaction.editReply({ 
+          content: '💡 Para deshabilitar alertas, usa el comando `/alerts disable` seguido del nombre del proyecto.' 
+        });
+        break;
+      case 'alerts_remove':
+        await interaction.editReply({ 
+          content: '💡 Para eliminar alertas específicas, usa el comando `/alerts remove` seguido del proyecto y tipo de alerta.' 
+        });
+        break;
+      case 'alerts_channel':
+        await interaction.editReply({ 
+          content: '💡 Para configurar el canal de alertas, usa el comando `/alerts channel` seguido del canal.' 
+        });
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleAlertsButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar botones de configuración
+async function handleConfigButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'config_channel':
+        await interaction.editReply({ 
+          content: '💡 Para configurar el canal de alertas, usa el comando `/alerts channel` seguido del canal.' 
+        });
+        break;
+      case 'config_role':
+        await interaction.editReply({ 
+          content: '💡 Para configurar roles permitidos, usa el comando `/alerts enable-role` seguido del rol.' 
+        });
+        break;
+      case 'config_status':
+        await handleAlertsStatus(interaction);
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleConfigButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar botones de estadísticas
+async function handleStatsButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'stats_projects':
+        await handleProjectsCommand(interaction);
+        break;
+      case 'stats_alerts':
+        await handleAlertsList(interaction);
+        break;
+      case 'stats_history':
+        await interaction.editReply({ 
+          content: '📈 El historial de precios se guarda automáticamente cuando hay cambios significativos (>1%).' 
+        });
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleStatsButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar botones de herramientas
+async function handleToolsButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'tools_verify':
+        await interaction.editReply({ 
+          content: '💡 Para verificar precios, usa el comando `/verify-price` seguido del nombre del proyecto.' 
+        });
+        break;
+      case 'tools_test':
+        await handleTestApiCommand(interaction);
+        break;
+      case 'tools_debug':
+        await interaction.editReply({ 
+          content: '🔧 **Información de Debug:**\n• Bot activo y funcionando\n• Tracking cada 1 minuto\n• Base de datos conectada\n• API Magic Eden operativa' 
+        });
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleToolsButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar botones de ayuda
+async function handleHelpButton(interaction) {
+  const buttonId = interaction.customId;
+  
+  try {
+    await interaction.deferReply({ flags: 64 });
+    
+    switch (buttonId) {
+      case 'help_commands':
+        await interaction.editReply({ 
+          content: '📋 **Lista Completa de Comandos:**\n\n**Principales:**\n• `/menu` - Menú con botones\n• `/setup` - Agregar proyecto\n• `/status` - Estado del proyecto\n• `/projects` - Listar proyectos\n• `/delete` - Eliminar proyecto\n\n**Alertas:**\n• `/alerts setup` - Configurar alerta\n• `/alerts list` - Mis alertas\n• `/alerts disable` - Deshabilitar\n• `/alerts remove` - Eliminar alerta\n• `/alerts channel` - Canal de alertas\n\n**Datos:**\n• `/floor` - Floor price\n• `/volume` - Volume 24h\n• `/verify-price` - Verificar precios\n• `/test-api` - Probar API' 
+        });
+        break;
+      case 'help_examples':
+        await interaction.editReply({ 
+          content: '💡 **Ejemplos de Uso:**\n\n**Agregar proyecto:**\n`/setup project:MonadPunks contract:0x123...`\n\n**Configurar alerta:**\n`/alerts setup project:MonadPunks alert_type:floor_change threshold:10%`\n\n**Ver estado:**\n`/status project:MonadPunks`\n\n**Ver floor price:**\n`/floor project:MonadPunks`' 
+        });
+        break;
+      default:
+        await interaction.editReply({ content: '❌ Opción no reconocida.' });
+    }
+  } catch (error) {
+    console.error('Error in handleHelpButton:', error);
+    await interaction.editReply({ content: '❌ Error interno.' });
+  }
+}
+
+// Manejar comando menu
+async function handleMenuCommand(interaction) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle('🤖 NFT Tracking Bot - Menú Principal')
+      .setDescription('Selecciona una opción usando los botones de abajo:')
+      .setColor('#7C3AED')
+      .setTimestamp()
+      .addFields(
+        { name: '📊 Proyectos', value: 'Ver, agregar y gestionar proyectos NFT', inline: true },
+        { name: '🔔 Alertas', value: 'Configurar y gestionar alertas de precios', inline: true },
+        { name: '⚙️ Configuración', value: 'Configurar el servidor y permisos', inline: true },
+        { name: '📈 Estadísticas', value: 'Ver estadísticas y datos de proyectos', inline: true },
+        { name: '🔧 Herramientas', value: 'Herramientas adicionales y debugging', inline: true },
+        { name: 'ℹ️ Ayuda', value: 'Información y comandos disponibles', inline: true }
+      )
+      .setFooter({ text: 'Usa los botones para navegar por las opciones' });
+
+    // Crear botones para el menú principal
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('menu_projects')
+          .setLabel('📊 Proyectos')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('menu_alerts')
+          .setLabel('🔔 Alertas')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('menu_config')
+          .setLabel('⚙️ Configuración')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('menu_stats')
+          .setLabel('📈 Estadísticas')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('menu_tools')
+          .setLabel('🔧 Herramientas')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('menu_help')
+          .setLabel('ℹ️ Ayuda')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.reply({ 
+      embeds: [embed], 
+      components: [row1, row2] 
+    });
+  } catch (error) {
+    console.error('Error in handleMenuCommand:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
 
