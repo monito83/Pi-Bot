@@ -758,10 +758,10 @@ async function getPreviousPrice(projectId, field, timeframe) {
       [projectId, timeAgo.toISOString()]
     );
     
-    return result.rows.length > 0 ? parseFloat(result.rows[0][field] || 0) : 0;
+    return result.rows.length > 0 ? parseFloat(result.rows[0][field]) : null;
   } catch (error) {
     console.error('Error getting previous price:', error);
-    return 0;
+    return null;
   }
 }
 
@@ -832,15 +832,9 @@ async function getProjectData(contractAddress) {
     }
   }
 
-  // Fallback: datos simulados para testing
-  console.log(`⚠️ No real data found, using simulated data`);
-  return {
-    floor_price: Math.random() * 0.5 + 0.1,
-    volume_24h: Math.random() * 10 + 1,
-    sales_count: Math.floor(Math.random() * 20) + 1,
-    listings_count: Math.floor(Math.random() * 100) + 10,
-    avg_sale_price: Math.random() * 0.6 + 0.2
-  };
+  // No fallback data - return null if no real data found
+  console.log(`❌ No real data found from any API for contract: ${contractAddress}`);
+  return null;
 }
 
 // Magic Eden API (Ethereum + Monad Testnet) - CORRECT ENDPOINTS WITH RETRY
@@ -2666,7 +2660,7 @@ async function showStatsMenu(interaction) {
         { name: '🔔 Alertas Activas', value: `${alertsResult.rows[0].count}`, inline: true },
         { name: '📈 Registros Históricos', value: `${historyResult.rows[0].count}`, inline: true },
         { name: '⏰ Última Actualización', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
-        { name: '🔄 Frecuencia de Tracking', value: 'Cada 1 minuto', inline: true },
+        { name: '🔄 Frecuencia de Tracking', value: 'Cada 5 minutos', inline: true },
         { name: '🌐 Estado del Bot', value: '🟢 Activo', inline: true }
       );
 
@@ -4049,8 +4043,8 @@ async function trackProject(project) {
   }
 }
 
-// Configurar job de cron para tracking automático (cada 1 minuto para pruebas)
-cron.schedule('*/1 * * * *', async () => {
+// Configurar job de cron para tracking automático (cada 5 minutos)
+cron.schedule('*/5 * * * *', async () => {
   console.log('⏰ Cron job: Starting project tracking...');
   
   try {
@@ -4236,12 +4230,18 @@ async function handleStatusCommand(interaction, projectName) {
     const projectData = await getProjectData(project.contract_address);
     
     if (!projectData) {
-      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API. El proyecto puede no existir o estar temporalmente no disponible.' });
       return;
     }
 
-    const currency = projectData.currency || 'ETH';
-    const floorPrice = projectData.floor_price || 0;
+    // Verificar que tenemos datos reales
+    if (!projectData.floor_price && projectData.floor_price !== 0) {
+      await interaction.editReply({ content: '❌ Error: No se pudo obtener datos del proyecto.' });
+      return;
+    }
+
+    const currency = projectData.currency;
+    const floorPrice = projectData.floor_price;
     const priceUSD = projectData.price_usd || 0;
 
     const embed = new EmbedBuilder()
@@ -4262,27 +4262,27 @@ async function handleStatusCommand(interaction, projectName) {
       },
       { 
         name: '📊 Volume 24h', 
-        value: `${(projectData.volume_24h || 0).toFixed(2)} ${currency}`, 
+        value: `${projectData.volume_24h ? projectData.volume_24h.toFixed(2) : 'N/A'} ${currency}`, 
         inline: true 
       },
       { 
         name: '🛒 Sales', 
-        value: `${projectData.sales_count || 0}`, 
+        value: `${projectData.sales_count || 'N/A'}`, 
         inline: true 
       },
       { 
         name: '📋 Listings', 
-        value: `${projectData.listings_count || 0}`, 
+        value: `${projectData.listings_count || 'N/A'}`, 
         inline: true 
       },
       { 
         name: '🎯 Top Bid', 
-        value: `${(projectData.top_bid || 0).toFixed(2)} ${currency}`, 
+        value: `${projectData.top_bid ? projectData.top_bid.toFixed(2) : 'N/A'} ${currency}`, 
         inline: true 
       },
       { 
         name: '📈 Avg Sale Price', 
-        value: `${(projectData.avg_sale_price || 0).toFixed(2)} ${currency}`, 
+        value: `${projectData.avg_sale_price ? projectData.avg_sale_price.toFixed(2) : 'N/A'} ${currency}`, 
         inline: true 
       }
     );
@@ -4316,12 +4316,18 @@ async function handleFloorCommand(interaction, projectName) {
     const projectData = await getProjectData(project.contract_address);
     
     if (!projectData) {
-      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API. El proyecto puede no existir o estar temporalmente no disponible.' });
       return;
     }
 
-    const currency = projectData.currency || 'ETH';
-    const floorPrice = projectData.floor_price || 0;
+    // Verificar que tenemos datos reales
+    if (!projectData.floor_price && projectData.floor_price !== 0) {
+      await interaction.editReply({ content: '❌ Error: No se pudo obtener el floor price del proyecto.' });
+      return;
+    }
+
+    const currency = projectData.currency;
+    const floorPrice = projectData.floor_price;
     const priceUSD = projectData.price_usd || 0;
 
     const embed = new EmbedBuilder()
@@ -4347,7 +4353,7 @@ async function handleFloorCommand(interaction, projectName) {
       },
       { 
         name: '🎯 Top Bid', 
-        value: `${(projectData.top_bid || 0).toFixed(2)} ${currency}`, 
+        value: `${projectData.top_bid ? projectData.top_bid.toFixed(2) : 'N/A'} ${currency}`, 
         inline: true 
       }
     );
@@ -4381,13 +4387,19 @@ async function handleVolumeCommand(interaction, projectName) {
     const projectData = await getProjectData(project.contract_address);
     
     if (!projectData) {
-      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API.' });
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos de la API. El proyecto puede no existir o estar temporalmente no disponible.' });
       return;
     }
 
-    const currency = projectData.currency || 'ETH';
-    const volume24h = projectData.volume_24h || 0;
-    const salesCount = projectData.sales_count || 0;
+    // Verificar que tenemos datos reales
+    if (!projectData.volume_24h && projectData.volume_24h !== 0) {
+      await interaction.editReply({ content: '❌ Error: No se pudo obtener el volumen del proyecto.' });
+      return;
+    }
+
+    const currency = projectData.currency;
+    const volume24h = projectData.volume_24h;
+    const salesCount = projectData.sales_count;
 
     const embed = new EmbedBuilder()
       .setTitle(`📊 Volume: ${project.name}`)
@@ -4412,7 +4424,7 @@ async function handleVolumeCommand(interaction, projectName) {
       },
       { 
         name: '📈 Avg Sale', 
-        value: `${salesCount > 0 ? (volume24h / salesCount).toFixed(2) : '0'} ${currency}`, 
+        value: `${salesCount > 0 ? (volume24h / salesCount).toFixed(2) : 'N/A'} ${currency}`, 
         inline: true 
       }
     );
@@ -4486,7 +4498,13 @@ async function handleAddProjectModal(interaction) {
     const projectData = await getProjectData(contractAddress);
     
     if (!projectData) {
-      await interaction.editReply({ content: '❌ No se pudieron obtener datos del proyecto desde la API. Verifica la dirección del contrato.' });
+      await interaction.editReply({ content: '❌ No se pudieron obtener datos del proyecto desde la API. Verifica la dirección del contrato y que el proyecto exista en Magic Eden.' });
+      return;
+    }
+    
+    // Verificar que tenemos datos reales (no null/undefined)
+    if (!projectData.floor_price && projectData.floor_price !== 0) {
+      await interaction.editReply({ content: '❌ Error: No se pudo obtener el floor price del proyecto. El contrato puede no existir o no tener datos disponibles.' });
       return;
     }
     
@@ -4498,10 +4516,10 @@ async function handleAddProjectModal(interaction) {
     
     const projectId = result.rows[0].id;
     
-    // Guardar datos iniciales del proyecto
+    // Guardar datos iniciales del proyecto (solo datos reales)
     await pool.query(
       'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
-      [projectId, projectData.floor_price || 0, projectData.volume_24h || 0, projectData.sales_count || 0, projectData.listings_count || 0, projectData.avg_sale_price || 0]
+      [projectId, projectData.floor_price, projectData.volume_24h, projectData.sales_count, projectData.listings_count, projectData.avg_sale_price]
     );
     
     const embed = new EmbedBuilder()
@@ -4511,10 +4529,10 @@ async function handleAddProjectModal(interaction) {
       .addFields(
         { name: '📝 Nombre', value: projectName, inline: true },
         { name: '📍 Contrato', value: `\`${contractAddress}\``, inline: true },
-        { name: '💰 Floor Price', value: `${(projectData.floor_price || 0).toFixed(2)} ${projectData.currency || 'ETH'}`, inline: true },
-        { name: '📊 Volume 24h', value: `${(projectData.volume_24h || 0).toFixed(2)} ${projectData.currency || 'ETH'}`, inline: true },
-        { name: '🛒 Sales', value: `${projectData.sales_count || 0}`, inline: true },
-        { name: '📋 Listings', value: `${projectData.listings_count || 0}`, inline: true }
+        { name: '💰 Floor Price', value: `${projectData.floor_price.toFixed(2)} ${projectData.currency}`, inline: true },
+        { name: '📊 Volume 24h', value: `${projectData.volume_24h.toFixed(2)} ${projectData.currency}`, inline: true },
+        { name: '🛒 Sales', value: `${projectData.sales_count}`, inline: true },
+        { name: '📋 Listings', value: `${projectData.listings_count}`, inline: true }
       )
       .setTimestamp();
     
