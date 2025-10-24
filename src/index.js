@@ -2612,7 +2612,6 @@ async function initializeDatabase() {
         last_sales_count INTEGER DEFAULT 0,
         last_listings_count INTEGER DEFAULT 0,
         last_avg_sale_price DECIMAL(20,8) DEFAULT 0,
-        last_top_bid DECIMAL(20,8) DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         last_updated TIMESTAMP DEFAULT NOW()
       );
@@ -2627,7 +2626,6 @@ async function initializeDatabase() {
         sales_count INTEGER DEFAULT 0,
         listings_count INTEGER DEFAULT 0,
         avg_sale_price DECIMAL(20,8) DEFAULT 0,
-        top_bid DECIMAL(20,8) DEFAULT 0,
         recorded_at TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -3004,15 +3002,14 @@ async function savePriceHistoryIfChanged(project, projectData) {
     if (lastRecord.rows.length === 0) {
       // No hay registros previos, insertar el primero
       await pool.query(
-        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price, top_bid) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
         [
           project.id,
           projectData.floor_price || 0,
           projectData.volume_24h || 0,
           projectData.sales_count || 0,
           projectData.listings_count || 0,
-          projectData.avg_sale_price || 0,
-          projectData.top_bid || 0
+          projectData.avg_sale_price || 0
         ]
       );
       console.log(`📊 Price history: First record saved for ${project.name}`);
@@ -3035,15 +3032,14 @@ async function savePriceHistoryIfChanged(project, projectData) {
     // Solo guardar si hay cambios significativos (>1%)
     if (floorChange > 0.01 || volumeChange > 0.01 || salesChange > 0.01) {
       await pool.query(
-        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price, top_bid) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        'INSERT INTO price_history (project_id, floor_price, volume_24h, sales_count, listings_count, avg_sale_price) VALUES ($1, $2, $3, $4, $5, $6)',
         [
           project.id,
           currentFloorPrice,
           currentVolume,
           currentSales,
           projectData.listings_count || 0,
-          projectData.avg_sale_price || 0,
-          projectData.top_bid || 0
+          projectData.avg_sale_price || 0
         ]
       );
       console.log(`📊 Price history: Significant change detected and saved for ${project.name}`);
@@ -3077,14 +3073,13 @@ async function trackProject(project) {
     
     // Actualizar datos del proyecto en la base de datos
     await pool.query(
-      'UPDATE nft_projects SET last_floor_price = $1, last_volume = $2, last_sales_count = $3, last_listings_count = $4, last_avg_sale_price = $5, last_top_bid = $6, last_updated = NOW() WHERE id = $7',
+      'UPDATE nft_projects SET last_floor_price = $1, last_volume = $2, last_sales_count = $3, last_listings_count = $4, last_avg_sale_price = $5, last_updated = NOW() WHERE id = $6',
       [
         projectData.floor_price,
         projectData.volume_24h,
         projectData.sales_count,
         projectData.listings_count,
         projectData.avg_sale_price,
-        projectData.top_bid,
         project.id
       ]
     );
