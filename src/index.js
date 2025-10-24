@@ -388,19 +388,21 @@ async function savePriceHistoryIfChanged(projectId, projectData) {
 
 // Verificar alertas (basado en el sistema de WL Manager)
 async function checkAlerts(project, projectData) {
-  console.log(`🔔 SIMPLE v1: Starting checkAlerts for ${project.name} (ID: ${project.id})`);
+  console.log(`🔔 SIMPLE v2: Starting checkAlerts for ${project.name} (ID: ${project.id})`);
   
   try {
+    console.log(`🔔 SIMPLE v2: About to query database for project ${project.id}`);
     // Obtener alertas activas para este proyecto
     const result = await pool.query(
       'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
       [project.id]
     );
     
-    console.log(`🔔 SIMPLE v1: Found ${result.rows.length} active alerts for project ${project.name}`);
+    console.log(`🔔 SIMPLE v2: Found ${result.rows.length} active alerts for project ${project.name}`);
+    console.log(`🔔 SIMPLE v2: Alert data:`, result.rows);
 
     if (result.rows.length === 0) {
-      console.log(`🔔 SIMPLE v1: No active alerts found for project ${project.name}`);
+      console.log(`🔔 SIMPLE v2: No active alerts found for project ${project.name}`);
       return;
     }
 
