@@ -294,6 +294,7 @@ async function trackProject(project) {
     );
 
     // Verificar alertas
+    console.log(`🔔 About to check alerts for ${project.name} (ID: ${project.id})`);
     try {
       await checkAlerts(project, projectData);
     } catch (alertError) {
