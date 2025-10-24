@@ -5,6 +5,13 @@ const axios = require('axios');
 const express = require('express');
 require('dotenv').config();
 
+// 🚀 DEPLOYMENT VERIFICATION LOG
+console.log('🚀 ===== BOT STARTING - DEPLOYMENT VERIFICATION =====');
+console.log('🚀 Timestamp:', new Date().toISOString());
+console.log('🚀 Node version:', process.version);
+console.log('🚀 Environment:', process.env.NODE_ENV || 'development');
+console.log('🚀 ================================================');
+
 // Crear servidor Express para healthcheck
 const app = express();
 const PORT = process.env.PORT || 3000;
