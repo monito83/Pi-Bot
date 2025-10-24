@@ -951,7 +951,6 @@ async function processAlert(alert, project, newData) {
           message += `💰 Floor: ${newData.floor_price.toFixed(2)} ${currency} (${alertConfig.type === 'floor_above' ? 'above' : 'below'} ${alertConfig.threshold_value} ${currency})\n`;
         }
       }
-    }
 
       // Verificar volumen
       if (alertConfig.type === 'volume_above' || alertConfig.type === 'volume_below') {
