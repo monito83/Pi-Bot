@@ -909,38 +909,108 @@ async function processAlert(alert, project, newData) {
     console.log(`🔔 processAlert: Alert types:`, alert.alert_types);
     console.log(`🔔 processAlert: Project data:`, newData);
     
+    // Parsear alert_types JSON
+    let alertConfigs = [];
+    try {
+      alertConfigs = JSON.parse(alert.alert_types);
+      console.log(`🔔 processAlert: Parsed alert configs:`, alertConfigs);
+    } catch (error) {
+      console.log(`🔔 processAlert: Error parsing alert_types JSON:`, error);
+      return;
+    }
+
     let shouldNotify = false;
     let message = '';
 
-    // Verificar floor price
-    if (alert.alert_types.includes('floor') && alert.floor_threshold) {
-      console.log(`🔔 processAlert: Checking floor price change`);
-      const change = ((newData.floor_price - project.last_floor_price) / project.last_floor_price) * 100;
-      console.log(`🔔 processAlert: Floor change: ${change}%, threshold: ${alert.floor_threshold}`);
+    // Procesar cada configuración de alerta
+    for (const alertConfig of alertConfigs) {
+      console.log(`🔔 processAlert: Processing alert config:`, alertConfig);
       
-      if (Math.abs(change) >= alert.floor_threshold) {
-        console.log(`🔔 processAlert: Floor change threshold met!`);
-        shouldNotify = true;
-        message += `💰 Floor: ${newData.floor_price.toFixed(3)} ETH (${change > 0 ? '+' : ''}${change.toFixed(1)}%)\n`;
+      if (!alertConfig.enabled) {
+        console.log(`🔔 processAlert: Alert config disabled, skipping`);
+        continue;
+      }
+
+      // Verificar floor price
+      if (alertConfig.type === 'floor_above' || alertConfig.type === 'floor_below') {
+        console.log(`🔔 processAlert: Checking floor price ${alertConfig.type}`);
+        console.log(`🔔 processAlert: Current floor: ${newData.floor_price}, threshold: ${alertConfig.threshold_value}`);
+        
+        let conditionMet = false;
+        if (alertConfig.type === 'floor_above' && newData.floor_price > alertConfig.threshold_value) {
+          conditionMet = true;
+          console.log(`🔔 processAlert: Floor above threshold met!`);
+        } else if (alertConfig.type === 'floor_below' && newData.floor_price < alertConfig.threshold_value) {
+          conditionMet = true;
+          console.log(`🔔 processAlert: Floor below threshold met!`);
+        }
+        
+        if (conditionMet) {
+          shouldNotify = true;
+          const currency = newData.currency || 'ETH';
+          message += `💰 Floor: ${newData.floor_price.toFixed(2)} ${currency} (${alertConfig.type === 'floor_above' ? 'above' : 'below'} ${alertConfig.threshold_value} ${currency})\n`;
+        }
       }
     }
 
-    // Verificar volumen
-    if (alert.alert_types.includes('volume') && alert.volume_threshold) {
-      if (newData.volume_24h >= alert.volume_threshold) {
-        shouldNotify = true;
-        message += `📊 Volume: ${newData.volume_24h.toFixed(2)} ETH\n`;
+      // Verificar volumen
+      if (alertConfig.type === 'volume_above' || alertConfig.type === 'volume_below') {
+        console.log(`🔔 processAlert: Checking volume ${alertConfig.type}`);
+        console.log(`🔔 processAlert: Current volume: ${newData.volume_24h}, threshold: ${alertConfig.threshold_value}`);
+        
+        let conditionMet = false;
+        if (alertConfig.type === 'volume_above' && newData.volume_24h > alertConfig.threshold_value) {
+          conditionMet = true;
+          console.log(`🔔 processAlert: Volume above threshold met!`);
+        } else if (alertConfig.type === 'volume_below' && newData.volume_24h < alertConfig.threshold_value) {
+          conditionMet = true;
+          console.log(`🔔 processAlert: Volume below threshold met!`);
+        }
+        
+        if (conditionMet) {
+          shouldNotify = true;
+          const currency = newData.currency || 'ETH';
+          message += `📊 Volume: ${newData.volume_24h.toFixed(2)} ${currency} (${alertConfig.type === 'volume_above' ? 'above' : 'below'} ${alertConfig.threshold_value} ${currency})\n`;
+        }
+      }
+
+      // Verificar ventas
+      if (alertConfig.type === 'sales_change') {
+        console.log(`🔔 processAlert: Checking sales change`);
+        console.log(`🔔 processAlert: Current sales: ${newData.sales_count}, threshold: ${alertConfig.threshold_value}`);
+        
+        if (newData.sales_count >= alertConfig.threshold_value) {
+          shouldNotify = true;
+          console.log(`🔔 processAlert: Sales threshold met!`);
+          message += `🛒 Sales: ${newData.sales_count} (above ${alertConfig.threshold_value})\n`;
+        }
+      }
+
+      // Verificar listings
+      if (alertConfig.type === 'listings_change') {
+        console.log(`🔔 processAlert: Checking listings change`);
+        console.log(`🔔 processAlert: Current listings: ${newData.listings_count}, threshold: ${alertConfig.threshold_value}`);
+        
+        if (parseInt(newData.listings_count) >= alertConfig.threshold_value) {
+          shouldNotify = true;
+          console.log(`🔔 processAlert: Listings threshold met!`);
+          message += `📋 Listings: ${newData.listings_count} (above ${alertConfig.threshold_value})\n`;
+        }
       }
     }
 
     if (shouldNotify) {
+      console.log(`🔔 processAlert: Sending notification to user ${user.username}`);
       const embed = new EmbedBuilder()
-        .setTitle(`🔥 ${project.name} - Alert`)
+        .setTitle(`🚨 Alert: ${project.name}`)
         .setDescription(message)
-        .setColor('#FF6B6B')
+        .setColor(0xff0000)
         .setTimestamp();
 
       await user.send({ embeds: [embed] });
+      console.log(`🔔 processAlert: Notification sent successfully!`);
+    } else {
+      console.log(`🔔 processAlert: No conditions met, no notification sent`);
     }
   } catch (error) {
     console.error('Error processing alert:', error);
