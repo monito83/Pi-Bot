@@ -894,17 +894,32 @@ async function checkAlerts(project, newData) {
 
 // Procesar alerta individual
 async function processAlert(alert, project, newData) {
+  console.log(`🔔 processAlert: Starting for user ${alert.discord_user_id}, project ${project.name}`);
+  
   try {
+    console.log(`🔔 processAlert: About to fetch user ${alert.discord_user_id}`);
     const user = await client.users.fetch(alert.discord_user_id);
-    if (!user) return;
+    console.log(`🔔 processAlert: User fetched:`, user ? user.username : 'null');
+    
+    if (!user) {
+      console.log(`🔔 processAlert: User not found, returning`);
+      return;
+    }
 
+    console.log(`🔔 processAlert: Alert types:`, alert.alert_types);
+    console.log(`🔔 processAlert: Project data:`, newData);
+    
     let shouldNotify = false;
     let message = '';
 
     // Verificar floor price
     if (alert.alert_types.includes('floor') && alert.floor_threshold) {
+      console.log(`🔔 processAlert: Checking floor price change`);
       const change = ((newData.floor_price - project.last_floor_price) / project.last_floor_price) * 100;
+      console.log(`🔔 processAlert: Floor change: ${change}%, threshold: ${alert.floor_threshold}`);
+      
       if (Math.abs(change) >= alert.floor_threshold) {
+        console.log(`🔔 processAlert: Floor change threshold met!`);
         shouldNotify = true;
         message += `💰 Floor: ${newData.floor_price.toFixed(3)} ETH (${change > 0 ? '+' : ''}${change.toFixed(1)}%)\n`;
       }
