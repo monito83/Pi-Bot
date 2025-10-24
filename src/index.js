@@ -3107,8 +3107,8 @@ async function trackProject(project) {
   }
 }
 
-// Configurar job de cron para tracking automático (cada 5 minutos)
-cron.schedule('*/5 * * * *', async () => {
+// Configurar job de cron para tracking automático (cada 1 minuto para pruebas)
+cron.schedule('*/1 * * * *', async () => {
   console.log('⏰ Cron job: Starting project tracking...');
   
   try {
