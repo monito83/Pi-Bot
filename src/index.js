@@ -361,6 +361,9 @@ async function savePriceHistoryIfChanged(projectId, projectData) {
 // Verificar alertas (basado en el sistema de WL Manager)
 async function checkAlerts(project, projectData) {
   console.log(`🔔 ENTERING checkAlerts function for ${project.name}`);
+  console.log(`🔔 Project ID: ${project.id}`);
+  console.log(`🔔 Project data exists: ${!!projectData}`);
+  
   try {
     console.log(`🔔 ===== CHECKING ALERTS FOR ${project.name.toUpperCase()} =====`);
     console.log(`🔔 Project ID: ${project.id}`);
