@@ -373,6 +373,9 @@ async function checkAlerts(project, projectData) {
   // SIMPLE TEST LOG
   console.log(`🔔 SIMPLE TEST: checkAlerts is working for ${project.name}`);
   
+  // CRITICAL DEBUG LOG
+  console.log(`🔔 CRITICAL: About to start try block for ${project.name}`);
+  
   try {
     console.log(`🔔 ===== CHECKING ALERTS FOR ${project.name.toUpperCase()} =====`);
     console.log(`🔔 Project ID: ${project.id}`);
