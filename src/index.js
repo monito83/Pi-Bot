@@ -864,16 +864,27 @@ async function getMonadData(contractAddress) {
 
 // Verificar alertas
 async function checkAlerts(project, newData) {
+  console.log(`🔔 REAL checkAlerts: Starting for ${project.name} (ID: ${project.id})`);
+  
   try {
+    console.log(`🔔 REAL checkAlerts: About to query database for project ${project.id}`);
     const result = await pool.query(
       'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
       [project.id]
     );
     const alerts = result.rows;
 
-    if (!alerts.length) return;
+    console.log(`🔔 REAL checkAlerts: Found ${alerts.length} active alerts for project ${project.name}`);
+    console.log(`🔔 REAL checkAlerts: Alert data:`, alerts);
 
+    if (!alerts.length) {
+      console.log(`🔔 REAL checkAlerts: No active alerts found for project ${project.name}`);
+      return;
+    }
+
+    console.log(`🔔 REAL checkAlerts: Processing ${alerts.length} alerts`);
     for (const alert of alerts) {
+      console.log(`🔔 REAL checkAlerts: Processing alert for user ${alert.discord_user_id}`);
       await processAlert(alert, project, newData);
     }
   } catch (error) {
