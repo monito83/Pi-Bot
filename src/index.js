@@ -306,6 +306,9 @@ async function trackProject(project) {
       await checkAlerts(project, projectData);
     } catch (alertError) {
       console.error(`❌ Error checking alerts for ${project.name}:`, alertError);
+      console.error(`❌ Error stack:`, alertError.stack);
+      console.error(`❌ Error message:`, alertError.message);
+      console.error(`❌ Error name:`, alertError.name);
     }
 
   } catch (error) {
