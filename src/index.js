@@ -294,7 +294,11 @@ async function trackProject(project) {
     );
 
     // Verificar alertas
-    await checkAlerts(project, projectData);
+    try {
+      await checkAlerts(project, projectData);
+    } catch (alertError) {
+      console.error(`❌ Error checking alerts for ${project.name}:`, alertError);
+    }
 
   } catch (error) {
     console.error(`Error tracking project ${project.name}:`, error);
