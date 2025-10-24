@@ -349,24 +349,45 @@ async function savePriceHistoryIfChanged(projectId, projectData) {
 // Verificar alertas (basado en el sistema de WL Manager)
 async function checkAlerts(project, projectData) {
   try {
+    console.log(`🔔 Checking alerts for project: ${project.name} (ID: ${project.id})`);
+    console.log(`🔔 Project data:`, {
+      floor_price: projectData.floor_price,
+      volume_24h: projectData.volume_24h,
+      sales_count: projectData.sales_count,
+      listings_count: projectData.listings_count
+    });
+
     // Obtener alertas activas para este proyecto
     const result = await pool.query(
       'SELECT * FROM user_alerts WHERE project_id = $1 AND is_active = true',
       [project.id]
     );
 
-    if (result.rows.length === 0) return;
+    console.log(`🔔 Found ${result.rows.length} active alerts for project ${project.name}`);
+
+    if (result.rows.length === 0) {
+      console.log(`🔔 No active alerts found for project ${project.name}`);
+      return;
+    }
 
     for (const alert of result.rows) {
       try {
+        console.log(`🔔 Processing alert for user ${alert.discord_user_id}`);
         const alertConfigs = JSON.parse(alert.alert_types || '[]');
+        console.log(`🔔 Alert configs:`, alertConfigs);
+        
         let shouldNotify = false;
         let message = '';
         let percentageChange = 0;
 
         // Verificar cada configuración de alerta
         for (const alertConfig of alertConfigs) {
-          if (!alertConfig.enabled) continue;
+          if (!alertConfig.enabled) {
+            console.log(`🔔 Alert config disabled:`, alertConfig);
+            continue;
+          }
+          
+          console.log(`🔔 Checking alert config:`, alertConfig);
           
           switch (alertConfig.type) {
             case 'floor_change':
@@ -396,11 +417,17 @@ async function checkAlerts(project, projectData) {
               break;
               
             case 'floor_above':
+              console.log(`🔔 Checking floor_above: current=${projectData.floor_price}, threshold=${alertConfig.threshold_value}`);
               if (projectData.floor_price && alertConfig.threshold_value) {
                 if (projectData.floor_price >= alertConfig.threshold_value) {
+                  console.log(`🔔 FLOOR ABOVE TRIGGERED! Current: ${projectData.floor_price} >= Threshold: ${alertConfig.threshold_value}`);
                   shouldNotify = true;
                   message = `Floor price reached ${alertConfig.threshold_value} ETH`;
+                } else {
+                  console.log(`🔔 Floor above not triggered: ${projectData.floor_price} < ${alertConfig.threshold_value}`);
                 }
+              } else {
+                console.log(`🔔 Floor above check skipped: floor_price=${projectData.floor_price}, threshold_value=${alertConfig.threshold_value}`);
               }
               break;
               
@@ -491,6 +518,8 @@ async function checkAlerts(project, projectData) {
           }
         }
 
+        console.log(`🔔 Alert processing result: shouldNotify=${shouldNotify}, message="${message}"`);
+
         if (shouldNotify) {
           // Verificar si ya se envió una alerta reciente (evitar spam)
           const recentAlert = await pool.query(
@@ -499,11 +528,16 @@ async function checkAlerts(project, projectData) {
           );
 
           if (recentAlert.rows.length === 0) {
+            console.log(`🔔 Sending alert to user ${alert.discord_user_id}: ${message}`);
             // Enviar notificación a Discord
             await sendDiscordAlert(alert, projectData, message, percentageChange);
             
             console.log(`🚨 Alert sent: ${project.name} - ${message}`);
+          } else {
+            console.log(`🔔 Alert not sent: recent alert found within 1 hour`);
           }
+        } else {
+          console.log(`🔔 No alert triggered for user ${alert.discord_user_id}`);
         }
       } catch (alertError) {
         console.error('Error processing individual alert:', alertError);
