@@ -1,6 +1,6 @@
 console.log('🔥 LOG 1: Starting to load modules...');
 console.log('🔥 ULTRA SIMPLE TEST v2: This code is definitely running!');
-const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
 console.log('🔥 LOG 3: PostgreSQL loaded');
@@ -145,6 +145,31 @@ initializeServerConfig();
 
 // Inicializar historial de alertas
 initializeAlertHistory();
+
+// Forzar creación de tabla alert_history después de un delay
+setTimeout(async () => {
+  console.log('🔧 Force creating alert_history table after delay...');
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS alert_history (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES nft_projects(id),
+        alert_type TEXT NOT NULL,
+        alert_value TEXT NOT NULL,
+        sent_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
+      ON alert_history (project_id, alert_type, alert_value, DATE(sent_at))
+    `);
+    
+    console.log('✅ Alert history table force created successfully');
+  } catch (error) {
+    console.error('❌ Error force creating alert history table:', error);
+  }
+}, 5000); // 5 segundos después del inicio
 
 // Comandos slash
 const commands = [
@@ -1168,18 +1193,32 @@ async function processAlert(alert, project, newData, guildId) {
 
       // Agregar información adicional
       const currency = newData?.currency || 'ETH';
+      const floorPrice = newData?.floor_price || 0;
+      const topBid = newData?.top_bid || 0;
+      const volume24h = newData?.volume_24h || 0;
+      const priceUSD = newData?.price_usd || 0;
+      
       embed.addFields({
         name: '📊 Datos Actuales',
-        value: `Floor: ${(newData?.floor_price || 0).toFixed(2)} ${currency}\nVolume: ${(newData?.volume_24h || 0).toFixed(2)} ${currency}`,
+        value: `Floor: ${floorPrice.toFixed(2)} ${currency} ($${priceUSD.toFixed(2)})\nTop Bid: ${topBid.toFixed(2)} ${currency}\nVolume: ${volume24h.toFixed(2)} ${currency}`,
         inline: true
       });
+
+      // Agregar botón para deshabilitar alerta
+      const disableButton = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`disable_alert_${project.id}_${alert.discord_user_id}`)
+            .setLabel('🔕 Deshabilitar Alerta')
+            .setStyle(ButtonStyle.Danger)
+        );
 
       // Intentar enviar al canal configurado
       if (serverConfig.rows.length > 0 && serverConfig.rows[0].alerts_channel_id) {
         try {
           const channel = client.channels.cache.get(serverConfig.rows[0].alerts_channel_id);
           if (channel) {
-            await channel.send({ embeds: [embed] });
+            await channel.send({ embeds: [embed], components: [disableButton] });
             console.log(`🔔 processAlert: Notification sent to channel ${channel.name}!`);
             
             // Registrar alerta enviada para anti-spam
@@ -1202,7 +1241,7 @@ async function processAlert(alert, project, newData, guildId) {
 
       // Fallback: enviar DM al usuario (solo si no hay canal configurado)
       console.log(`🔔 processAlert: No channel configured, sending DM to user ${user.username}`);
-      await user.send({ embeds: [embed] });
+      await user.send({ embeds: [embed], components: [disableButton] });
       console.log(`🔔 processAlert: Notification sent via DM successfully!`);
       
       // Registrar alerta enviada para anti-spam
@@ -1294,6 +1333,49 @@ client.on('interactionCreate', async interaction => {
     }
   } catch (error) {
     console.error('Error handling autocomplete:', error);
+  }
+});
+
+// Manejar botones
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+
+  try {
+    if (interaction.customId.startsWith('disable_alert_')) {
+      const parts = interaction.customId.split('_');
+      const projectId = parts[2];
+      const userId = parts[3];
+
+      // Verificar que el usuario que hace clic es el mismo que configuró la alerta
+      if (interaction.user.id !== userId) {
+        await interaction.reply({ 
+          content: '❌ Solo puedes deshabilitar tus propias alertas.', 
+          flags: 64 
+        });
+        return;
+      }
+
+      // Deshabilitar alertas para este proyecto
+      await pool.query(
+        'UPDATE user_alerts SET is_active = false WHERE discord_user_id = $1 AND project_id = $2',
+        [userId, projectId]
+      );
+
+      // Obtener nombre del proyecto
+      const projectResult = await pool.query('SELECT name FROM nft_projects WHERE id = $1', [projectId]);
+      const projectName = projectResult.rows[0]?.name || 'Unknown';
+
+      await interaction.reply({ 
+        content: `✅ Alertas deshabilitadas para **${projectName}**`, 
+        flags: 64 
+      });
+    }
+  } catch (error) {
+    console.error('Error handling button interaction:', error);
+    await interaction.reply({ 
+      content: '❌ Error al procesar la solicitud.', 
+      flags: 64 
+    });
   }
 });
 
