@@ -413,15 +413,15 @@ client.once('ready', () => {
 
 // Programar tracking automático
 function scheduleTracking() {
-  // Programar tracking automático cada 1 minuto (TEMPORAL PARA DEBUG)
-  cron.schedule('*/1 * * * *', async () => {
-    console.log('🔄 Ejecutando tracking automático...');
-    await performTracking();
-  }, {
-    timezone: "America/New_York"
-  });
+  // Programar tracking automático cada 1 minuto (TEMPORAL PARA DEBUG) - DISABLED
+  // cron.schedule('*/1 * * * *', async () => {
+  //   console.log('🔄 Ejecutando tracking automático...');
+  //   await performTracking();
+  // }, {
+  //   timezone: "America/New_York"
+  // });
 
-  console.log('⏰ Tracking automático programado cada 1 minuto (DEBUG MODE)');
+  console.log('⏰ Tracking automático programado cada 1 minuto (DEBUG MODE) - DISABLED');
 }
 
 // Realizar tracking de todos los proyectos
@@ -1511,7 +1511,7 @@ async function handleStatusCommand(interaction) {
       },
       { 
         name: '🎯 Top Bid', 
-        value: `${topBid.toFixed(2)} ${currency}\n($${(topBid * (currency === 'MON' ? 0.02 : await getETHPrice())).toFixed(2)} USD)`, 
+        value: `${topBid.toFixed(2)} ${currency}\n(${currency === 'MON' ? (topBid * 0.02).toFixed(2) : 'N/A'} USD)`, 
         inline: true 
       },
       { 
@@ -3528,11 +3528,8 @@ async function getETHPrice() {
     }
   } catch (error) {
     console.error('Error fetching ETH price:', error.message);
+    throw new Error(`Failed to fetch ETH price: ${error.message}`);
   }
-  
-  // Fallback si falla la API
-  console.log('⚠️ Using fallback ETH price: $3000');
-  return 3000;
 }
 
 // Inicializar base de datos y tablas
@@ -3554,7 +3551,7 @@ async function initializeDatabase() {
         last_listings_count INTEGER DEFAULT 0,
         last_avg_sale_price DECIMAL(20,8) DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
-        last_updated TIMESTAMP DEFAULT NOW()
+        last_update TIMESTAMP DEFAULT NOW()
       );
     `);
     
@@ -4014,7 +4011,7 @@ async function trackProject(project) {
     
     // Actualizar datos del proyecto en la base de datos
     await pool.query(
-      'UPDATE nft_projects SET last_floor_price = $1, last_volume = $2, last_sales_count = $3, last_listings_count = $4, last_avg_sale_price = $5, last_updated = NOW() WHERE id = $6',
+      'UPDATE nft_projects SET last_floor_price = $1, last_volume = $2, last_sales_count = $3, last_listings_count = $4, last_avg_sale_price = $5 WHERE id = $6',
       [
         projectData.floor_price,
         projectData.volume_24h,
