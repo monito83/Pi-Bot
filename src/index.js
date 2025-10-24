@@ -76,6 +76,28 @@ const pool = new Pool({
 });
 console.log('🔥 LOG 18: PostgreSQL pool created');
 
+// Crear tabla de configuración del servidor si no existe
+async function initializeServerConfig() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS server_config (
+        id SERIAL PRIMARY KEY,
+        guild_id TEXT NOT NULL UNIQUE,
+        alerts_channel_id TEXT,
+        enabled_roles TEXT DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('✅ Server config table initialized');
+  } catch (error) {
+    console.error('Error initializing server config table:', error);
+  }
+}
+
+// Inicializar configuración del servidor
+initializeServerConfig();
+
 // Comandos slash
 const commands = [
   new SlashCommandBuilder()
@@ -227,7 +249,35 @@ const commands = [
               { name: 'Volume Below', value: 'volume_below' },
               { name: 'Sales Count Change', value: 'sales_change' },
               { name: 'Listings Count Change', value: 'listings_change' }
-            ))),
+            )))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel')
+        .setDescription('Configurar canal de alertas (Solo Admin)')
+        .addChannelOption(option =>
+          option.setName('channel')
+            .setDescription('Canal donde se enviarán las alertas')
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('enable-role')
+        .setDescription('Habilitar rol para usar el bot (Solo Admin)')
+        .addRoleOption(option =>
+          option.setName('role')
+            .setDescription('Rol a habilitar')
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('disable-role')
+        .setDescription('Deshabilitar rol para usar el bot (Solo Admin)')
+        .addRoleOption(option =>
+          option.setName('role')
+            .setDescription('Rol a deshabilitar')
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('status')
+        .setDescription('Ver configuración de alertas del servidor')),
 
   new SlashCommandBuilder()
     .setName('delete')
@@ -882,10 +932,14 @@ async function checkAlerts(project, newData) {
       return;
     }
 
+    // Obtener configuración del servidor para el guild_id
+    const serverConfig = await pool.query('SELECT guild_id FROM server_config LIMIT 1');
+    const guildId = serverConfig.rows.length > 0 ? serverConfig.rows[0].guild_id : null;
+
     console.log(`🔔 REAL checkAlerts: Processing ${alerts.length} alerts`);
     for (const alert of alerts) {
       console.log(`🔔 REAL checkAlerts: Processing alert for user ${alert.discord_user_id}`);
-      await processAlert(alert, project, newData);
+      await processAlert(alert, project, newData, guildId);
     }
   } catch (error) {
     console.error('Error checking alerts:', error);
@@ -893,7 +947,7 @@ async function checkAlerts(project, newData) {
 }
 
 // Procesar alerta individual
-async function processAlert(alert, project, newData) {
+async function processAlert(alert, project, newData, guildId) {
   console.log(`🔔 processAlert: Starting for user ${alert.discord_user_id}, project ${project.name}`);
   
   try {
@@ -999,15 +1053,38 @@ async function processAlert(alert, project, newData) {
     }
 
     if (shouldNotify) {
-      console.log(`🔔 processAlert: Sending notification to user ${user.username}`);
+      console.log(`🔔 processAlert: Sending notification for project ${project.name}`);
+      
+      // Obtener configuración del servidor para el canal de alertas
+      const serverConfig = await pool.query(
+        'SELECT alerts_channel_id FROM server_config WHERE guild_id = $1',
+        [guildId || 'default'] // Usar guildId pasado como parámetro
+      );
+
       const embed = new EmbedBuilder()
         .setTitle(`🚨 Alert: ${project.name}`)
         .setDescription(message)
         .setColor(0xff0000)
         .setTimestamp();
 
+      // Intentar enviar al canal configurado
+      if (serverConfig.rows.length > 0 && serverConfig.rows[0].alerts_channel_id) {
+        try {
+          const channel = client.channels.cache.get(serverConfig.rows[0].alerts_channel_id);
+          if (channel) {
+            await channel.send({ embeds: [embed] });
+            console.log(`🔔 processAlert: Notification sent to channel ${channel.name}!`);
+            return;
+          }
+        } catch (error) {
+          console.error('Error sending to channel:', error);
+        }
+      }
+
+      // Fallback: enviar DM al usuario (solo si no hay canal configurado)
+      console.log(`🔔 processAlert: No channel configured, sending DM to user ${user.username}`);
       await user.send({ embeds: [embed] });
-      console.log(`🔔 processAlert: Notification sent successfully!`);
+      console.log(`🔔 processAlert: Notification sent via DM successfully!`);
     } else {
       console.log(`🔔 processAlert: No conditions met, no notification sent`);
     }
@@ -1530,11 +1607,35 @@ async function handleAlertsCommand(interaction) {
     case 'remove':
       await handleAlertsRemove(interaction);
       break;
+    case 'channel':
+      await handleAlertsChannel(interaction);
+      break;
+    case 'enable-role':
+      await handleAlertsEnableRole(interaction);
+      break;
+    case 'disable-role':
+      await handleAlertsDisableRole(interaction);
+      break;
+    case 'status':
+      await handleAlertsStatus(interaction);
+      break;
   }
 }
 
 // Manejar setup de alertas
 async function handleAlertsSetup(interaction) {
+  // Verificar permisos: admin o rol habilitado
+  const isAdmin = await hasAdminPermissions(interaction);
+  const hasRole = await hasEnabledRole(interaction);
+  
+  if (!isAdmin && !hasRole) {
+    await interaction.reply({ 
+      content: '❌ No tienes permisos para configurar alertas. Contacta a un administrador.', 
+      flags: 64 
+    });
+    return;
+  }
+
   const projectName = interaction.options.getString('project');
   const alertType = interaction.options.getString('alert_type');
   const timeframe = interaction.options.getString('timeframe') || '24h';
@@ -1777,6 +1878,245 @@ async function handleAlertsDisable(interaction) {
     await interaction.reply({ content: `✅ Alertas desactivadas para **${projectName}**`, flags: 64 });
   } catch (error) {
     console.error('Error in handleAlertsDisable:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Verificar si el usuario tiene permisos de admin
+async function hasAdminPermissions(interaction) {
+  return interaction.member.permissions.has('Administrator');
+}
+
+// Verificar si el usuario tiene un rol habilitado
+async function hasEnabledRole(interaction) {
+  try {
+    const result = await pool.query(
+      'SELECT enabled_roles FROM server_config WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+
+    if (result.rows.length === 0) {
+      return false; // No hay configuración del servidor
+    }
+
+    const enabledRoles = JSON.parse(result.rows[0].enabled_roles || '[]');
+    
+    // Verificar si el usuario tiene alguno de los roles habilitados
+    return interaction.member.roles.cache.some(role => enabledRoles.includes(role.id));
+  } catch (error) {
+    console.error('Error checking enabled role:', error);
+    return false;
+  }
+}
+
+// Manejar configuración de canal de alertas
+async function handleAlertsChannel(interaction) {
+  if (!await hasAdminPermissions(interaction)) {
+    await interaction.reply({ content: '❌ Solo los administradores pueden configurar el canal de alertas.', flags: 64 });
+    return;
+  }
+
+  const channel = interaction.options.getChannel('channel');
+
+  try {
+    // Verificar que el canal sea de texto
+    if (channel.type !== 0) { // 0 = GUILD_TEXT
+      await interaction.reply({ content: '❌ El canal debe ser un canal de texto.', flags: 64 });
+      return;
+    }
+
+    // Verificar permisos del bot en el canal
+    const botMember = interaction.guild.members.cache.get(interaction.client.user.id);
+    const permissions = channel.permissionsFor(botMember);
+    
+    if (!permissions.has(['SendMessages', 'EmbedLinks'])) {
+      await interaction.reply({ content: '❌ El bot no tiene permisos para enviar mensajes en este canal.', flags: 64 });
+      return;
+    }
+
+    // Insertar o actualizar configuración del servidor
+    await pool.query(`
+      INSERT INTO server_config (guild_id, alerts_channel_id, updated_at) 
+      VALUES ($1, $2, NOW()) 
+      ON CONFLICT (guild_id) 
+      DO UPDATE SET alerts_channel_id = $2, updated_at = NOW()
+    `, [interaction.guild.id, channel.id]);
+
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Canal de Alertas Configurado')
+      .setDescription(`Las alertas se enviarán a ${channel}`)
+      .setColor('#10B981')
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleAlertsChannel:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Manejar habilitación de rol
+async function handleAlertsEnableRole(interaction) {
+  if (!await hasAdminPermissions(interaction)) {
+    await interaction.reply({ content: '❌ Solo los administradores pueden habilitar roles.', flags: 64 });
+    return;
+  }
+
+  const role = interaction.options.getRole('role');
+
+  try {
+    // Obtener configuración actual del servidor
+    const result = await pool.query(
+      'SELECT enabled_roles FROM server_config WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+
+    let enabledRoles = [];
+    if (result.rows.length > 0) {
+      enabledRoles = JSON.parse(result.rows[0].enabled_roles || '[]');
+    }
+
+    // Verificar si el rol ya está habilitado
+    if (enabledRoles.includes(role.id)) {
+      await interaction.reply({ content: `⚠️ El rol ${role} ya está habilitado.`, flags: 64 });
+      return;
+    }
+
+    // Agregar el rol a la lista
+    enabledRoles.push(role.id);
+
+    // Insertar o actualizar configuración del servidor
+    await pool.query(`
+      INSERT INTO server_config (guild_id, enabled_roles, updated_at) 
+      VALUES ($1, $2, NOW()) 
+      ON CONFLICT (guild_id) 
+      DO UPDATE SET enabled_roles = $2, updated_at = NOW()
+    `, [interaction.guild.id, JSON.stringify(enabledRoles)]);
+
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Rol Habilitado')
+      .setDescription(`El rol ${role} ahora puede usar el bot para configurar alertas`)
+      .setColor('#10B981')
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleAlertsEnableRole:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Manejar deshabilitación de rol
+async function handleAlertsDisableRole(interaction) {
+  if (!await hasAdminPermissions(interaction)) {
+    await interaction.reply({ content: '❌ Solo los administradores pueden deshabilitar roles.', flags: 64 });
+    return;
+  }
+
+  const role = interaction.options.getRole('role');
+
+  try {
+    // Obtener configuración actual del servidor
+    const result = await pool.query(
+      'SELECT enabled_roles FROM server_config WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+
+    if (result.rows.length === 0) {
+      await interaction.reply({ content: '❌ No hay configuración del servidor.', flags: 64 });
+      return;
+    }
+
+    let enabledRoles = JSON.parse(result.rows[0].enabled_roles || '[]');
+
+    // Verificar si el rol está habilitado
+    if (!enabledRoles.includes(role.id)) {
+      await interaction.reply({ content: `⚠️ El rol ${role} no está habilitado.`, flags: 64 });
+      return;
+    }
+
+    // Remover el rol de la lista
+    enabledRoles = enabledRoles.filter(roleId => roleId !== role.id);
+
+    // Actualizar configuración del servidor
+    await pool.query(
+      'UPDATE server_config SET enabled_roles = $1, updated_at = NOW() WHERE guild_id = $2',
+      [JSON.stringify(enabledRoles), interaction.guild.id]
+    );
+
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Rol Deshabilitado')
+      .setDescription(`El rol ${role} ya no puede usar el bot para configurar alertas`)
+      .setColor('#EF4444')
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleAlertsDisableRole:', error);
+    await interaction.reply({ content: '❌ Error interno.', flags: 64 });
+  }
+}
+
+// Manejar status de configuración de alertas
+async function handleAlertsStatus(interaction) {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM server_config WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+
+    if (result.rows.length === 0) {
+      await interaction.reply({ content: '❌ No hay configuración de alertas para este servidor.', flags: 64 });
+      return;
+    }
+
+    const config = result.rows[0];
+    const enabledRoles = JSON.parse(config.enabled_roles || '[]');
+    
+    const embed = new EmbedBuilder()
+      .setTitle('📊 Configuración de Alertas del Servidor')
+      .setColor('#7C3AED')
+      .setTimestamp();
+
+    // Canal de alertas
+    if (config.alerts_channel_id) {
+      const channel = interaction.guild.channels.cache.get(config.alerts_channel_id);
+      embed.addFields({
+        name: '📢 Canal de Alertas',
+        value: channel ? `${channel}` : '❌ Canal no encontrado',
+        inline: true
+      });
+    } else {
+      embed.addFields({
+        name: '📢 Canal de Alertas',
+        value: '❌ No configurado',
+        inline: true
+      });
+    }
+
+    // Roles habilitados
+    if (enabledRoles.length > 0) {
+      const roleNames = enabledRoles.map(roleId => {
+        const role = interaction.guild.roles.cache.get(roleId);
+        return role ? role.name : 'Rol eliminado';
+      }).join(', ');
+      
+      embed.addFields({
+        name: '👥 Roles Habilitados',
+        value: roleNames,
+        inline: false
+      });
+    } else {
+      embed.addFields({
+        name: '👥 Roles Habilitados',
+        value: '❌ Ninguno configurado',
+        inline: false
+      });
+    }
+
+    await interaction.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleAlertsStatus:', error);
     await interaction.reply({ content: '❌ Error interno.', flags: 64 });
   }
 }
