@@ -36,6 +36,26 @@ Son cookies de tu cuenta de Twitter. Los extraes de tu navegador una vez (proces
 - Tokens de Twitter: **GRATIS** (cuenta personal normal)
 - API de Twitter: **NO NECESARIA** (Nitter funciona sin API oficial)
 
+**Especificaciones del VPS:**
+- **Sistema Operativo**: Linux (Ubuntu 20.04 LTS / Debian 11 / CentOS 8+)
+- **RAM**: Mínimo 1GB (recomendado 2GB)
+- **CPU**: 1-2 cores
+- **Disco**: 20GB SSD
+- **Red**: 1TB tráfico/mes suficiente
+- **SOs compatibles**: Cualquier Linux moderno funciona
+
+**No usar:**
+- ❌ Windows Server (más caro, innecesario)
+- ❌ MacOS Server (caro y limitado)
+- ❌ Hosting compartido (no permite Docker)
+
+**Proveedores recomendados (con precios bajos):**
+1. **DigitalOcean** - $6/mes (1GB RAM, más confiable)
+2. **Linode/Akamai** - $5/mes (más antigua, confiable)
+3. **Hetzner** - €4/mes (~$4.30) - **MÁS BARATO** en Europa
+4. **Contabo** - €4/mes - Buena relación precio/rendimiento
+5. **Vultr** - $6/mes (similar a DigitalOcean)
+
 Ver instrucciones completas: https://github.com/zedeus/nitter/#installation
 
 ### Agregar Más Instancias
