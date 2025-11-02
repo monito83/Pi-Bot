@@ -64,7 +64,10 @@ class TwitterRSSService {
         
         const response = await axios.get(rssUrl, {
           headers: this.headers,
-          timeout: 10000
+          timeout: 15000,
+          validateStatus: function (status) {
+            return status === 200; // Solo aceptar 200 como válido
+          }
         });
 
         if (response.status === 200 && response.data) {
@@ -92,7 +95,19 @@ class TwitterRSSService {
 
       } catch (error) {
         lastError = error;
-        console.error(`❌ Error con proveedor ${provider}:`, error.message);
+        const status = error.response?.status;
+        const statusText = error.response?.statusText;
+        
+        if (status === 429) {
+          console.error(`❌ Error 429 (Rate Limit) con proveedor ${provider}`);
+          // Esperar un poco antes de rotar si es rate limit
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else if (status) {
+          console.error(`❌ Error ${status} (${statusText}) con proveedor ${provider}`);
+        } else {
+          console.error(`❌ Error con proveedor ${provider}:`, error.message);
+        }
+        
         this.rotateProvider();
       }
     }

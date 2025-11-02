@@ -129,12 +129,6 @@ async function initializeAlertHistory() {
         )
       `);
       
-      // Crear índice único después de crear la tabla
-      await pool.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
-        ON alert_history (project_id, alert_type, alert_value, sent_at::date)
-      `);
-      
       console.log('✅ Alert history table created successfully');
     } else {
       console.log('✅ Alert history table already exists');
@@ -204,11 +198,6 @@ setTimeout(async () => {
         alert_value TEXT NOT NULL,
         sent_at TIMESTAMP DEFAULT NOW()
       )
-    `);
-    
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS alert_history_unique_idx 
-      ON alert_history (project_id, alert_type, alert_value, sent_at::date)
     `);
     
     console.log('✅ Alert history table force created successfully');
@@ -3950,8 +3939,7 @@ async function initializeAlertHistory() {
           project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
           alert_type VARCHAR(50) NOT NULL,
           alert_value VARCHAR(100) NOT NULL,
-          created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(project_id, alert_type, alert_value, created_at::date)
+          created_at TIMESTAMP DEFAULT NOW()
         );
       `);
       
@@ -5222,8 +5210,7 @@ setTimeout(async () => {
         project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
         alert_type VARCHAR(50) NOT NULL,
         alert_value VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(project_id, alert_type, alert_value, created_at::date)
+        created_at TIMESTAMP DEFAULT NOW()
       );
     `);
     console.log('🔔 alert_history table force-created successfully');
