@@ -22,12 +22,21 @@ El bot rota automáticamente entre estas instancias si una falla.
 ### Instancia Propia (Recomendado para Producción)
 
 Para uso intensivo, se recomienda [hostear tu propia instancia de Nitter](https://github.com/zedeus/nitter/#installation):
-- Control total sobre rate limits
-- Mayor estabilidad
-- Sin dependencia de instancias públicas
-- Requiere Docker + Redis + tokens de sesión de Twitter
+- ✅ **100% FREE** - No pagas por tokens ni APIs
+- ✅ Control total sobre rate limits
+- ✅ Mayor estabilidad (no dependes de instancias públicas)
+- ⚠️ Requiere: Docker + Redis + tokens de sesión de una cuenta de Twitter gratuita
 
-Ver instrucciones completas en: https://github.com/zedeus/nitter/
+**¿Qué son los "tokens de sesión"?**
+Son cookies de tu cuenta de Twitter. Los extraes de tu navegador una vez (proceso de 2 minutos) y los usas gratis. La cuenta de Twitter es gratuita, no pagas nada.
+
+**Costos reales:**
+- Nitter + Redis: **GRATIS** (open source)
+- Hosting (servidor para correr Docker): **~$5-10/mes** (VPS como DigitalOcean/Linode)
+- Tokens de Twitter: **GRATIS** (cuenta personal normal)
+- API de Twitter: **NO NECESARIA** (Nitter funciona sin API oficial)
+
+Ver instrucciones completas: https://github.com/zedeus/nitter/#installation
 
 ### Agregar Más Instancias
 
