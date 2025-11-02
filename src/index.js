@@ -12,6 +12,8 @@ const express = require('express');
 console.log('🔥 LOG 6: Express loaded');
 require('dotenv').config();
 console.log('🔥 LOG 7: Dotenv loaded');
+const TwitterRSSService = require('./services/twitterRSS');
+console.log('🔥 LOG 8: Twitter RSS Service loaded');
 
 // 🚀 DEPLOYMENT VERIFICATION LOG
 console.log('🚀 ===== BOT STARTING - DEPLOYMENT VERIFICATION =====');
@@ -75,6 +77,10 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 console.log('🔥 LOG 18: PostgreSQL pool created');
+
+// Inicializar servicio de Twitter RSS
+const twitterService = new TwitterRSSService();
+console.log('🐦 Twitter RSS service initialized');
 
 // Crear tabla de configuración del servidor si no existe
 async function initializeServerConfig() {
@@ -145,6 +151,46 @@ initializeServerConfig();
 
 // Inicializar historial de alertas
 initializeAlertHistory();
+
+// Crear tabla de cuentas de Twitter si no existe
+async function initializeTwitterTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS twitter_accounts (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        guild_id TEXT NOT NULL,
+        last_tweet_id TEXT,
+        last_check TIMESTAMP DEFAULT NOW(),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(username, guild_id)
+      )
+    `);
+    
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS twitter_history (
+        id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES twitter_accounts(id) ON DELETE CASCADE,
+        tweet_id TEXT NOT NULL,
+        tweet_text TEXT,
+        tweet_url TEXT,
+        tweeted_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(account_id, tweet_id)
+      )
+    `);
+    
+    console.log('✅ Twitter tables initialized');
+  } catch (error) {
+    console.error('Error initializing Twitter tables:', error);
+  }
+}
+
+// Inicializar tablas de Twitter
+initializeTwitterTables();
 
 // Forzar creación de tabla alert_history después de un delay
 setTimeout(async () => {
@@ -381,7 +427,45 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('menu')
-    .setDescription('Mostrar menú principal con botones interactivos')
+    .setDescription('Mostrar menú principal con botones interactivos'),
+
+  // Comandos de Twitter
+  new SlashCommandBuilder()
+    .setName('twitter')
+    .setDescription('Gestionar seguimiento de cuentas de Twitter/X')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('add')
+        .setDescription('Agregar una cuenta de Twitter para monitorear')
+        .addStringOption(option =>
+          option.setName('username')
+            .setDescription('Nombre de usuario de Twitter (sin @)')
+            .setRequired(true))
+        .addChannelOption(option =>
+          option.setName('channel')
+            .setDescription('Canal donde enviar las alertas')
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Remover una cuenta de Twitter del monitoreo')
+        .addStringOption(option =>
+          option.setName('username')
+            .setDescription('Nombre de usuario de Twitter (sin @)')
+            .setRequired(true)
+            .setAutocomplete(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('list')
+        .setDescription('Listar todas las cuentas de Twitter monitoreadas'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('test')
+        .setDescription('Probar obtener el último tweet de una cuenta')
+        .addStringOption(option =>
+          option.setName('username')
+            .setDescription('Nombre de usuario de Twitter (sin @)')
+            .setRequired(true)))
 ];
 
 // Registrar comandos
@@ -1313,6 +1397,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'menu':
         await handleMenuCommand(interaction);
         break;
+      case 'twitter':
+        await handleTwitterCommand(interaction);
+        break;
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
@@ -1344,6 +1431,18 @@ client.on('interactionCreate', async interaction => {
       
       await interaction.respond(
         filtered.map(project => ({ name: project, value: project }))
+      );
+    }
+    
+    // Autocompletado para cuentas de Twitter
+    if (interaction.commandName === 'twitter' && interaction.options.getSubcommand() === 'remove') {
+      const accounts = await getTwitterAccountsList(interaction.guildId);
+      const filtered = accounts
+        .filter(account => account.toLowerCase().includes(focusedValue.toLowerCase()))
+        .slice(0, 25);
+      
+      await interaction.respond(
+        filtered.map(account => ({ name: `@${account}`, value: account }))
       );
     }
   } catch (error) {
@@ -3301,6 +3400,209 @@ async function handleHelpButton(interaction) {
   }
 }
 
+// Manejar comando twitter
+async function handleTwitterCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+  
+  switch (subcommand) {
+    case 'add':
+      await handleTwitterAdd(interaction);
+      break;
+    case 'remove':
+      await handleTwitterRemove(interaction);
+      break;
+    case 'list':
+      await handleTwitterList(interaction);
+      break;
+    case 'test':
+      await handleTwitterTest(interaction);
+      break;
+  }
+}
+
+// Agregar cuenta de Twitter
+async function handleTwitterAdd(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const username = interaction.options.getString('username').replace('@', '').trim().toLowerCase();
+    const channel = interaction.options.getChannel('channel');
+    const guildId = interaction.guildId;
+    
+    // Validar canal
+    if (!channel) {
+      await interaction.editReply({ content: '❌ Canal no válido.' });
+      return;
+    }
+    
+    // Verificar si la cuenta ya está siendo monitoreada
+    const existing = await pool.query(
+      'SELECT * FROM twitter_accounts WHERE username = $1 AND guild_id = $2',
+      [username, guildId]
+    );
+    
+    if (existing.rows.length > 0) {
+      await interaction.editReply({ 
+        content: `❌ La cuenta @${username} ya está siendo monitoreada en este servidor.` 
+      });
+      return;
+    }
+    
+    // Probar que podemos obtener el feed RSS
+    try {
+      const latestTweet = await twitterService.getLatestTweet(username);
+      
+      if (!latestTweet) {
+        throw new Error('No se pudo obtener tweets de esta cuenta');
+      }
+      
+      // Insertar en base de datos
+      const result = await pool.query(
+        `INSERT INTO twitter_accounts (username, channel_id, guild_id, last_tweet_id, is_active)
+         VALUES ($1, $2, $3, $4, true) RETURNING *`,
+        [username, channel.id, guildId, latestTweet.id]
+      );
+      
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Cuenta de Twitter Agregada')
+        .setDescription(`**@${username}** ahora será monitoreada`)
+        .addFields(
+          { name: 'Canal', value: `<#${channel.id}>`, inline: true },
+          { name: 'Último tweet', value: latestTweet.id ? `ID: ${latestTweet.id}` : 'N/A', inline: true }
+        )
+        .setColor(0x1DA1F2)
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      console.log(`✅ Cuenta de Twitter agregada: @${username} en canal ${channel.name}`);
+      
+    } catch (error) {
+      console.error('Error verificando cuenta de Twitter:', error);
+      await interaction.editReply({ 
+        content: `❌ No se pudo acceder a la cuenta @${username}. Verifica que el nombre sea correcto.` 
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error in handleTwitterAdd:', error);
+    await interaction.editReply({ content: '❌ Error interno al agregar cuenta de Twitter.' });
+  }
+}
+
+// Remover cuenta de Twitter
+async function handleTwitterRemove(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const username = interaction.options.getString('username').replace('@', '').trim().toLowerCase();
+    const guildId = interaction.guildId;
+    
+    const result = await pool.query(
+      'DELETE FROM twitter_accounts WHERE username = $1 AND guild_id = $2 RETURNING *',
+      [username, guildId]
+    );
+    
+    if (result.rows.length === 0) {
+      await interaction.editReply({ content: `❌ No se encontró la cuenta @${username} en este servidor.` });
+      return;
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Cuenta de Twitter Removida')
+      .setDescription(`**@${username}** ya no será monitoreada`)
+      .setColor(0xFF6B6B)
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`✅ Cuenta de Twitter removida: @${username}`);
+    
+  } catch (error) {
+    console.error('Error in handleTwitterRemove:', error);
+    await interaction.editReply({ content: '❌ Error interno al remover cuenta de Twitter.' });
+  }
+}
+
+// Listar cuentas de Twitter
+async function handleTwitterList(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const guildId = interaction.guildId;
+    const result = await pool.query(
+      'SELECT * FROM twitter_accounts WHERE guild_id = $1 ORDER BY username',
+      [guildId]
+    );
+    
+    if (result.rows.length === 0) {
+      await interaction.editReply({ content: '📭 No hay cuentas de Twitter monitoreadas en este servidor.' });
+      return;
+    }
+    
+    const accounts = result.rows;
+    const fields = accounts.map(account => {
+      const channel = interaction.guild.channels.cache.get(account.channel_id);
+      const status = account.is_active ? '✅ Activo' : '❌ Inactivo';
+      return {
+        name: `@${account.username}`,
+        value: `Canal: ${channel ? `<#${channel.id}>` : 'N/A'}\nStatus: ${status}\nÚltimo check: <t:${Math.floor(new Date(account.last_check).getTime() / 1000)}:R>`,
+        inline: true
+      };
+    });
+    
+    const embed = new EmbedBuilder()
+      .setTitle('🐦 Cuentas de Twitter Monitoreadas')
+      .setDescription(`**${accounts.length}** cuenta(s) configurada(s)`)
+      .addFields(fields)
+      .setColor(0x1DA1F2)
+      .setTimestamp();
+    
+    await interaction.editReply({ embeds: [embed] });
+    
+  } catch (error) {
+    console.error('Error in handleTwitterList:', error);
+    await interaction.editReply({ content: '❌ Error interno al listar cuentas de Twitter.' });
+  }
+}
+
+// Probar cuenta de Twitter
+async function handleTwitterTest(interaction) {
+  try {
+    await interaction.deferReply();
+    
+    const username = interaction.options.getString('username').replace('@', '').trim().toLowerCase();
+    
+    // Intentar obtener el último tweet
+    const latestTweet = await twitterService.getLatestTweet(username);
+    
+    if (!latestTweet) {
+      await interaction.editReply({ content: `❌ No se pudo obtener tweets de @${username}. Verifica que el nombre sea correcto.` });
+      return;
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Test Exitoso')
+      .setDescription(`Se pudo acceder a la cuenta @${username}`)
+      .addFields(
+        { name: 'Último tweet ID', value: latestTweet.id || 'N/A', inline: true },
+        { name: 'Publicado', value: `<t:${Math.floor(latestTweet.timestamp.getTime() / 1000)}:R>`, inline: true }
+      )
+      .setURL(latestTweet.url)
+      .setColor(0x1DA1F2)
+      .setTimestamp();
+    
+    if (latestTweet.text) {
+      embed.addFields({ name: 'Preview', value: latestTweet.text.substring(0, 256) + (latestTweet.text.length > 256 ? '...' : '') });
+    }
+    
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`✅ Test de Twitter exitoso para: @${username}`);
+    
+  } catch (error) {
+    console.error('Error in handleTwitterTest:', error);
+    await interaction.editReply({ content: `❌ Error al probar cuenta @${username}: ${error.message}` });
+  }
+}
+
 // Manejar comando menu
 async function handleMenuCommand(interaction) {
   try {
@@ -3494,6 +3796,20 @@ async function getProjectsList() {
     return result.rows.map(row => row.name);
   } catch (error) {
     console.error('Error getting projects list:', error);
+    return [];
+  }
+}
+
+// Obtener lista de cuentas de Twitter para autocompletado
+async function getTwitterAccountsList(guildId) {
+  try {
+    const result = await pool.query(
+      'SELECT username FROM twitter_accounts WHERE guild_id = $1 ORDER BY username', 
+      [guildId]
+    );
+    return result.rows.map(row => row.username);
+  } catch (error) {
+    console.error('Error getting Twitter accounts list:', error);
     return [];
   }
 }
@@ -4081,6 +4397,109 @@ cron.schedule('*/5 * * * *', async () => {
     console.log('⏰ Cron job: Project tracking completed');
   } catch (error) {
     console.error('Error in cron job:', error);
+  }
+});
+
+// Monitorear un tweet específico
+async function trackTwitterAccount(account) {
+  try {
+    console.log(`🐦 Checking Twitter account: @${account.username}`);
+    
+    // Obtener nuevos tweets
+    const newTweets = await twitterService.getNewTweets(
+      account.username, 
+      account.last_tweet_id
+    );
+    
+    if (!newTweets || newTweets.length === 0) {
+      console.log(`🐦 No hay nuevos tweets de @${account.username}`);
+      return;
+    }
+    
+    console.log(`🐦 ${newTweets.length} nuevos tweets de @${account.username}`);
+    
+    // Obtener canal de Discord
+    const channel = await client.channels.fetch(account.channel_id);
+    
+    if (!channel) {
+      console.error(`❌ Canal no encontrado: ${account.channel_id}`);
+      return;
+    }
+    
+    // Enviar cada tweet como notificación
+    for (const tweet of newTweets) {
+      await sendTwitterAlert(channel, tweet);
+      
+      // Guardar en historial
+      await pool.query(
+        `INSERT INTO twitter_history (account_id, tweet_id, tweet_text, tweet_url, tweeted_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (account_id, tweet_id) DO NOTHING`,
+        [account.id, tweet.id, tweet.text, tweet.url, tweet.timestamp]
+      );
+      
+      // Pequeña pausa entre tweets
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    // Actualizar último tweet conocido
+    const latestTweetId = newTweets[0].id;
+    await pool.query(
+      'UPDATE twitter_accounts SET last_tweet_id = $1, last_check = NOW() WHERE id = $2',
+      [latestTweetId, account.id]
+    );
+    
+    console.log(`✅ Twitter tracking completado para @${account.username}`);
+    
+  } catch (error) {
+    console.error(`❌ Error tracking Twitter account @${account.username}:`, error);
+  }
+}
+
+// Enviar alerta de Twitter a Discord
+async function sendTwitterAlert(channel, tweet) {
+  try {
+    const embed = new EmbedBuilder()
+      .setTitle(`🐦 Nuevo Tweet de @${tweet.username}`)
+      .setDescription(tweet.text)
+      .setURL(tweet.url)
+      .setColor(0x1DA1F2) // Color azul de Twitter/X
+      .setTimestamp(tweet.timestamp)
+      .setFooter({ text: `Twitter/X Alert` });
+    
+    if (tweet.imageUrl) {
+      embed.setImage(tweet.imageUrl);
+    }
+    
+    await channel.send({ embeds: [embed] });
+    console.log(`✅ Tweet enviado al canal: ${channel.name}`);
+    
+  } catch (error) {
+    console.error('❌ Error enviando alerta de Twitter:', error);
+  }
+}
+
+// Configurar job de cron para tracking de Twitter (cada 3 minutos)
+cron.schedule('*/3 * * * *', async () => {
+  console.log('🐦 Cron job: Starting Twitter tracking...');
+  
+  try {
+    // Obtener todas las cuentas de Twitter activas
+    const result = await pool.query('SELECT * FROM twitter_accounts WHERE is_active = true');
+    const accounts = result.rows;
+    
+    console.log(`🐦 Found ${accounts.length} active Twitter accounts to track`);
+    
+    // Monitorear cada cuenta
+    for (const account of accounts) {
+      await trackTwitterAccount(account);
+      // Pausa entre cuentas para evitar rate limits
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    console.log('🐦 Cron job: Twitter tracking completed');
+  } catch (error) {
+    console.error('❌ Error in Twitter cron job:', error);
   }
 });
 
