@@ -7,13 +7,15 @@ const xml2js = require('xml2js');
  */
 class TwitterRSSService {
   constructor() {
-    // Instancias de Nitter disponibles
-    // El usuario reporta que nitter.net está funcionando
+    // Instancias de Nitter disponibles (basado en status.d420.de)
+    // IMPORTANTE: Nitter requiere tokens de sesión desde 2024, las instancias públicas tienen rate limits
     this.rssProviders = [
-      'https://nitter.net',   // Instancia oficial de Nitter - ACTUALIZADA 2024
-      'https://nitter.it',    // Instancia alternativa
-      'https://nitter.unixfox.eu', // Instancia alternativa
-      // Agregar más instancias según estén disponibles
+      'https://nitter.net',                  // Instancia principal - Healthy (85% uptime)
+      'https://nitter.it',                   // Instancia alternativa
+      'https://d420.de/nitter',              // Instancia alternativa - Healthy
+      'https://nitter.privacyredirect.com',  // Instancia alternativa - Healthy
+      'https://nitter.unixfox.eu',           // Instancia alternativa
+      // Más instancias según disponibilidad: https://status.d420.de/
     ];
     
     this.currentProviderIndex = 0;

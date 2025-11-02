@@ -8,12 +8,26 @@ El bot usa Nitter (https://nitter.net) y otras instancias RSS para acceder a Twi
 
 ### Proveedores RSS Configurados
 
-El bot viene pre-configurado con:
-1. **https://nitter.net** - Instancia principal de Nitter (FUNCIONANDO ✅)
+El bot viene pre-configurado con múltiples instancias de Nitter (basadas en [status.d420.de](https://status.d420.de/)):
+1. **https://nitter.net** - Instancia principal (85% uptime promedio)
 2. **https://nitter.it** - Instancia alternativa
-3. **https://nitter.unixfox.eu** - Instancia alternativa
+3. **https://d420.de/nitter** - Instancia alternativa (Healthy)
+4. **https://nitter.privacyredirect.com** - Instancia alternativa (Healthy)
+5. **https://nitter.unixfox.eu** - Instancia alternativa
 
 El bot rota automáticamente entre estas instancias si una falla.
+
+**⚠️ IMPORTANTE**: Desde 2024, Nitter requiere [tokens de sesión reales de Twitter](https://github.com/zedeus/nitter/), lo que significa que las instancias públicas tienen **rate limits estrictos**. Los 429 (Too Many Requests) son normales con uso intensivo.
+
+### Instancia Propia (Recomendado para Producción)
+
+Para uso intensivo, se recomienda [hostear tu propia instancia de Nitter](https://github.com/zedeus/nitter/#installation):
+- Control total sobre rate limits
+- Mayor estabilidad
+- Sin dependencia de instancias públicas
+- Requiere Docker + Redis + tokens de sesión de Twitter
+
+Ver instrucciones completas en: https://github.com/zedeus/nitter/
 
 ### Agregar Más Instancias
 
@@ -54,20 +68,30 @@ Prueba si se puede acceder a una cuenta de Twitter.
 
 ## 🚨 Solución de Problemas
 
-### Error: "No se pudo acceder a la cuenta"
-- Verifica que el nombre de usuario sea correcto
-- Revisa que los proveedores RSS estén funcionando
-- Intenta cambiar a otro proveedor en `twitterRSS.js`
+### Error: "No se pudo acceder a la cuenta @username"
+- ✅ **Primero**: Verifica que el nombre de usuario sea correcto (sin @)
+- ✅ **Segundo**: Asegúrate que la cuenta sea pública en Twitter
+- ⚠️ **Si persiste**: Es probable que todas las instancias públicas estén con rate limit (429)
+- 💡 **Solución**: Configura tu propia instancia de Nitter o espera unos minutos
+
+### Error 429 (Rate Limit)
+**Este es NORMAL** con instancias públicas de Nitter:
+- Las instancias públicas comparten su quota entre todos los usuarios
+- El bot rota automáticamente entre 5 instancias
+- Si todas fallan, espera 5-10 minutos y prueba de nuevo
+- Para producción: hostea tu propia instancia de Nitter
 
 ### No se reciben notificaciones
 - Verifica que la cuenta esté activa en `/twitter list`
-- Revisa los logs del bot para ver errores
+- Revisa los logs del bot en Railway para ver errores
 - Asegúrate que el canal de Discord tenga permisos correctos
+- Verifica que la cuenta haya publicado tweets desde que la agregaste
 
-### Proveedor RSS no funciona
-1. Actualiza la lista de proveedores en `twitterRSS.js`
-2. Reinicia el bot
-3. Prueba con `/twitter test`
+### Proveedor RSS no funciona / Todas fallan
+1. Consulta [status.d420.de](https://status.d420.de/) para ver instancias disponibles
+2. Actualiza la lista de proveedores en `twitterRSS.js` si es necesario
+3. Reinicia el bot: `git push` y espera el deployment
+4. Prueba con `/twitter test elonmusk` (cuenta pública conocida)
 
 ## 📊 Estructura de Base de Datos
 
