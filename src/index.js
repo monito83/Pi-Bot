@@ -1392,7 +1392,14 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
-    await interaction.reply({ content: '❌ Error interno. Intenta de nuevo.', flags: 64 });
+    try {
+      // Solo intentar reply si no fue deferred
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: '❌ Error interno. Intenta de nuevo.', flags: 64 });
+      }
+    } catch (replyError) {
+      console.error('Error sending error reply:', replyError);
+    }
   }
 });
 
@@ -3588,7 +3595,12 @@ async function handleTwitterTest(interaction) {
     
   } catch (error) {
     console.error('Error in handleTwitterTest:', error);
-    await interaction.editReply({ content: `❌ Error al probar cuenta @${username}: ${error.message}` });
+    try {
+      const username = interaction.options?.getString('username')?.replace('@', '').trim().toLowerCase() || 'desconocida';
+      await interaction.editReply({ content: `❌ Error al probar cuenta @${username}: ${error.message}` });
+    } catch (replyError) {
+      console.error('Error sending error reply:', replyError);
+    }
   }
 }
 
