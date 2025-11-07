@@ -625,6 +625,10 @@ const commands = [
     .setDescription('Gestionar lista de proyectos con submit de wallets')
     .addSubcommand(subcommand =>
       subcommand
+        .setName('menu')
+        .setDescription('Abrir el gestor interactivo de submit wallets'))
+    .addSubcommand(subcommand =>
+      subcommand
         .setName('add')
         .setDescription('Agregar un proyecto y su canal de submit')
         .addStringOption(option =>
