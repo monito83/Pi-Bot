@@ -3760,3 +3760,625 @@ async function handleHelpButton(interaction) {
     await interaction.editReply({ content: '❌ Error al mostrar ayuda.' });
   }
 }
+
+const SUPPORTED_WALLET_CHAINS = ['monad', 'eth', 'solana', 'base', 'other'];
+
+function normalizeChain(value, fallback = 'monad') {
+  if (!value) return fallback;
+  const normalized = value.toLowerCase();
+  return SUPPORTED_WALLET_CHAINS.includes(normalized) ? normalized : 'other';
+}
+
+async function handleWalletCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+
+  switch (subcommand) {
+    case 'add':
+      await handleWalletAdd(interaction);
+        break;
+    case 'list':
+      await handleWalletList(interaction);
+        break;
+    case 'remove':
+      await handleWalletRemove(interaction);
+        break;
+    case 'edit':
+      await handleWalletEdit(interaction);
+      break;
+    case 'channel_set':
+      await handleWalletChannelSet(interaction);
+      break;
+    case 'channel_clear':
+      await handleWalletChannelClear(interaction);
+        break;
+      default:
+      await interaction.reply({ content: '❌ Subcomando no soportado.', ephemeral: true });
+  }
+}
+
+async function handleWalletAdd(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const chain = normalizeChain(interaction.options.getString('chain'));
+  const link = interaction.options.getString('link').trim();
+  const label = interaction.options.getString('label')?.trim() || null;
+  const guildId = interaction.guildId;
+
+  if (!projectName) {
+    await interaction.editReply({ content: '❌ Debes proporcionar un nombre de proyecto.' });
+    return;
+  }
+
+  if (!isValidUrl(link)) {
+    await interaction.editReply({ content: '❌ Link inválido. Debe comenzar con http:// o https://.' });
+    return;
+  }
+
+  try {
+    await ensureServerConfigRow(guildId);
+
+    const existing = await pool.query(
+      `SELECT * FROM wallet_projects
+       WHERE guild_id = $1 AND lower(project_name) = lower($2) AND lower(chain) = lower($3)`,
+      [guildId, projectName, chain]
+    );
+
+    let projectId;
+    let createdNew = false;
+
+    if (existing.rows.length === 0) {
+      const inserted = await pool.query(
+        `INSERT INTO wallet_projects (guild_id, project_name, chain, submitted_by)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [guildId, projectName, chain, interaction.user.id]
+      );
+      projectId = inserted.rows[0].id;
+      createdNew = true;
+    } else {
+      projectId = existing.rows[0].id;
+    }
+
+    const duplicateChannel = await pool.query(
+      `SELECT id FROM wallet_channels WHERE project_id = $1 AND channel_link = $2`,
+      [projectId, link]
+    );
+
+    if (duplicateChannel.rows.length > 0) {
+      await interaction.editReply({ content: '❌ Ese link ya está registrado para este proyecto.' });
+      return;
+    }
+    
+    await pool.query(
+      `INSERT INTO wallet_channels (project_id, submitted_by, label, channel_link)
+       VALUES ($1, $2, $3, $4)` ,
+      [projectId, interaction.user.id, label, link]
+    );
+
+    await pool.query('UPDATE wallet_projects SET updated_at = NOW() WHERE id = $1', [projectId]);
+
+    await updateWalletMessage(guildId);
+
+    if (createdNew) {
+      await interaction.editReply({ content: `✅ Proyecto **${projectName}** (${chain.toUpperCase()}) agregado con su primer canal.` });
+          } else {
+      await interaction.editReply({ content: `✅ Canal agregado al proyecto **${projectName}** (${chain.toUpperCase()}).` });
+    }
+            } catch (error) {
+    console.error('Error in handleWalletAdd:', error);
+    await interaction.editReply({ content: '❌ No se pudo agregar el proyecto. Intenta nuevamente.' });
+  }
+}
+
+async function handleWalletList(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const chainOption = interaction.options.getString('chain');
+    const chainFilter = chainOption && chainOption !== 'all' ? normalizeChain(chainOption) : null;
+
+    const projects = await getWalletProjectsWithChannels(interaction.guildId, chainFilter);
+    const embed = buildWalletEmbed(projects, { chainFilter });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleWalletList:', error);
+    await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
+  }
+}
+
+async function handleWalletRemove(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const chainOption = interaction.options.getString('chain');
+  const chain = chainOption ? normalizeChain(chainOption) : null;
+  const label = interaction.options.getString('label')?.trim() || null;
+  const link = interaction.options.getString('link')?.trim() || null;
+  const guildId = interaction.guildId;
+
+  if (!projectName) {
+    await interaction.editReply({ content: '❌ Debes indicar el nombre del proyecto.' });
+      return;
+    }
+    
+  try {
+    const resolution = await resolveWalletProject(guildId, projectName, chain);
+
+    if (resolution.error === 'not_found') {
+      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+      return;
+    }
+
+    if (resolution.error === 'ambiguous') {
+      const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
+      await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
+          return;
+        }
+        
+    const project = resolution.project;
+
+    if (label || link) {
+      const params = [project.id];
+      let query = 'SELECT id FROM wallet_channels WHERE project_id = $1';
+
+      if (label) {
+        params.push(label.toLowerCase());
+        query += ` AND lower(COALESCE(label, '')) = lower($${params.length})`;
+      }
+
+      if (link) {
+        params.push(link);
+        query += ` AND channel_link = $${params.length}`;
+      }
+
+      const channelResult = await pool.query(query, params);
+
+      if (channelResult.rows.length === 0) {
+        await interaction.editReply({ content: '❌ No se encontró un canal que coincida con los datos proporcionados.' });
+        return;
+      }
+
+      const ids = channelResult.rows.map(row => row.id);
+      await pool.query('DELETE FROM wallet_channels WHERE id = ANY($1::uuid[])', [ids]);
+
+      const remaining = await pool.query('SELECT COUNT(*)::int FROM wallet_channels WHERE project_id = $1', [project.id]);
+
+      if (remaining.rows[0].count === 0) {
+        await pool.query('DELETE FROM wallet_projects WHERE id = $1', [project.id]);
+        await updateWalletMessage(guildId);
+        await interaction.editReply({ content: `🗑️ Se eliminaron los canales y el proyecto **${project.project_name}** (${project.chain.toUpperCase()}) quedó vacío, por lo que también se eliminó.` });
+        return;
+      }
+
+      await pool.query('UPDATE wallet_projects SET updated_at = NOW() WHERE id = $1', [project.id]);
+      await updateWalletMessage(guildId);
+      await interaction.editReply({ content: `🗑️ Canal eliminado para **${project.project_name}** (${project.chain.toUpperCase()}).` });
+      return;
+    }
+
+    await pool.query('DELETE FROM wallet_projects WHERE id = $1', [project.id]);
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `🗑️ Proyecto **${project.project_name}** (${project.chain.toUpperCase()}) eliminado.` });
+    } catch (error) {
+    console.error('Error in handleWalletRemove:', error);
+    await interaction.editReply({ content: '❌ No se pudo eliminar el proyecto.' });
+  }
+}
+
+async function handleWalletEdit(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const chainOption = interaction.options.getString('chain');
+  const chain = chainOption ? normalizeChain(chainOption) : null;
+  const newName = interaction.options.getString('new_name')?.trim();
+  const newChainOption = interaction.options.getString('new_chain');
+  const newChain = newChainOption ? normalizeChain(newChainOption) : null;
+  const channelLabel = interaction.options.getString('channel_label')?.trim();
+  const channelLink = interaction.options.getString('channel_link')?.trim();
+  const newLabel = interaction.options.getString('new_label')?.trim();
+  const newLink = interaction.options.getString('new_link')?.trim();
+  const guildId = interaction.guildId;
+
+  if (!newName && !newChain && !newLabel && !newLink) {
+    await interaction.editReply({ content: '❌ Debes proporcionar algún cambio (nuevo nombre, red o datos de canal).' });
+    return;
+  }
+
+  try {
+    const resolution = await resolveWalletProject(guildId, projectName, chain);
+
+    if (resolution.error === 'not_found') {
+      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+      return;
+    }
+
+    if (resolution.error === 'ambiguous') {
+      const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
+      await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
+      return;
+    }
+
+    const project = resolution.project;
+    const appliedChanges = [];
+
+    if (newName) {
+      if (!newName.trim()) {
+        await interaction.editReply({ content: '❌ El nuevo nombre no puede estar vacío.' });
+      return;
+    }
+
+      const duplicateCheck = await pool.query(
+        `SELECT id FROM wallet_projects
+         WHERE guild_id = $1 AND lower(project_name) = lower($2) AND lower(chain) = lower($3) AND id <> $4`,
+        [guildId, newName, project.chain, project.id]
+      );
+
+      if (duplicateCheck.rows.length > 0) {
+        await interaction.editReply({ content: '❌ Ya existe otro proyecto con ese nombre en esa red.' });
+        return;
+      }
+
+      await pool.query('UPDATE wallet_projects SET project_name = $1, updated_at = NOW() WHERE id = $2', [newName, project.id]);
+      project.project_name = newName;
+      appliedChanges.push('nombre');
+    }
+
+    if (newChain && newChain !== project.chain) {
+      const conflict = await pool.query(
+        `SELECT id FROM wallet_projects
+         WHERE guild_id = $1 AND lower(project_name) = lower($2) AND lower(chain) = lower($3) AND id <> $4`,
+        [guildId, project.project_name, newChain, project.id]
+      );
+
+      if (conflict.rows.length > 0) {
+        await interaction.editReply({ content: '❌ Ya existe ese proyecto en la red seleccionada.' });
+      return;
+    }
+
+      await pool.query('UPDATE wallet_projects SET chain = $1, updated_at = NOW() WHERE id = $2', [newChain, project.id]);
+      project.chain = newChain;
+      appliedChanges.push('red');
+    }
+
+    if (channelLabel || channelLink) {
+      const params = [project.id];
+      let query = 'SELECT * FROM wallet_channels WHERE project_id = $1';
+
+      if (channelLabel) {
+        params.push(channelLabel.toLowerCase());
+        query += ` AND lower(COALESCE(label, '')) = lower($${params.length})`;
+      }
+
+      if (channelLink) {
+        params.push(channelLink);
+        query += ` AND channel_link = $${params.length}`;
+      }
+
+      query += ' ORDER BY created_at LIMIT 1';
+
+      const channelResult = await pool.query(query, params);
+
+      if (channelResult.rows.length === 0) {
+        await interaction.editReply({ content: '❌ No se encontró un canal que coincida con los datos proporcionados.' });
+      return;
+    }
+
+      const channel = channelResult.rows[0];
+      const updates = [];
+      const updateParams = [];
+
+      if (newLabel !== undefined && newLabel !== null) {
+        updateParams.push(newLabel || null);
+        updates.push(`label = $${updateParams.length}`);
+      }
+
+      if (newLink) {
+        if (!isValidUrl(newLink)) {
+          await interaction.editReply({ content: '❌ El nuevo link del canal no es válido.' });
+      return;
+    }
+        updateParams.push(newLink);
+        updates.push(`channel_link = $${updateParams.length}`);
+      }
+
+      if (updates.length > 0) {
+        updateParams.push(channel.id);
+        await pool.query(
+          `UPDATE wallet_channels SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${updateParams.length}`,
+          updateParams
+        );
+        appliedChanges.push('canal');
+      }
+    }
+
+    if (appliedChanges.length === 0) {
+      await interaction.editReply({ content: 'ℹ️ No se detectaron cambios para aplicar.' });
+      return;
+    }
+    
+    await pool.query('UPDATE wallet_projects SET updated_at = NOW() WHERE id = $1', [project.id]);
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `✏️ Cambios aplicados en **${project.project_name}** (${project.chain.toUpperCase()}): ${appliedChanges.join(', ')}.` });
+  } catch (error) {
+    console.error('Error in handleWalletEdit:', error);
+    await interaction.editReply({ content: '❌ No se pudo actualizar el proyecto.' });
+  }
+}
+
+async function handleWalletChannelSet(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const channel = interaction.options.getChannel('channel');
+  const guildId = interaction.guildId;
+
+  if (!channel || !channel.isTextBased()) {
+    await interaction.editReply({ content: '❌ Debes seleccionar un canal de texto válido.' });
+      return;
+    }
+    
+  if (channel.guildId && channel.guildId !== guildId) {
+    await interaction.editReply({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
+      return;
+    }
+    
+  try {
+    await ensureServerConfigRow(guildId);
+      
+      await pool.query(
+      `UPDATE server_config
+       SET wallet_channel_id = $1,
+           wallet_message_id = NULL,
+           updated_at = NOW()
+       WHERE guild_id = $2`,
+      [channel.id, guildId]
+    );
+
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `✅ Canal configurado: <#${channel.id}>` });
+  } catch (error) {
+    console.error('Error in handleWalletChannelSet:', error);
+    await interaction.editReply({ content: '❌ No se pudo configurar el canal.' });
+  }
+}
+
+async function handleWalletChannelClear(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId;
+
+  try {
+    const config = await getServerConfigRow(guildId);
+
+    await pool.query(
+      `UPDATE server_config
+       SET wallet_channel_id = NULL,
+           wallet_message_id = NULL,
+           updated_at = NOW()
+       WHERE guild_id = $1`,
+      [guildId]
+    );
+
+    if (config?.wallet_channel_id && config?.wallet_message_id) {
+      const channel = await client.channels.fetch(config.wallet_channel_id).catch(() => null);
+      if (channel && channel.isTextBased()) {
+        try {
+          const message = await channel.messages.fetch(config.wallet_message_id);
+          await message.unpin().catch(() => {});
+          await message.delete().catch(() => {});
+  } catch (error) {
+          console.log('No se pudo eliminar el mensaje de wallet existente:', error.message);
+        }
+      }
+    }
+
+    await interaction.editReply({ content: '✅ Canal de wallet reseteado.' });
+  } catch (error) {
+    console.error('Error in handleWalletChannelClear:', error);
+    await interaction.editReply({ content: '❌ No se pudo limpiar la configuración de canal.' });
+  }
+}
+
+async function getWalletProjectNames(guildId) {
+  const result = await pool.query(
+    `SELECT DISTINCT project_name
+     FROM wallet_projects
+     WHERE guild_id = $1
+     ORDER BY lower(project_name)` ,
+    [guildId]
+  );
+  return result.rows.map(row => row.project_name);
+}
+
+async function resolveWalletProject(guildId, projectName, chain) {
+  const params = [guildId, projectName];
+  let query = `SELECT * FROM wallet_projects WHERE guild_id = $1 AND lower(project_name) = lower($2)`;
+
+  if (chain) {
+    params.push(chain);
+    query += ` AND lower(chain) = lower($${params.length})`;
+  }
+
+  const result = await pool.query(query, params);
+
+  if (result.rows.length === 0) {
+    return { error: 'not_found' };
+  }
+
+  if (!chain && result.rows.length > 1) {
+    return { error: 'ambiguous', chains: result.rows.map(row => row.chain) };
+  }
+
+  return { project: result.rows[0] };
+}
+
+async function getWalletProjectsWithChannels(guildId, chainFilter = null) {
+  const params = [guildId];
+  let query = `
+    SELECT
+      p.id,
+      p.project_name,
+      p.chain,
+      p.submitted_by,
+      p.created_at,
+      p.updated_at,
+      c.id AS channel_id,
+      c.label,
+      c.channel_link,
+      c.submitted_by AS channel_submitted_by,
+      c.created_at AS channel_created_at
+    FROM wallet_projects p
+    LEFT JOIN wallet_channels c ON c.project_id = p.id
+    WHERE p.guild_id = $1`;
+
+  if (chainFilter) {
+    params.push(chainFilter);
+    query += ` AND p.chain = $${params.length}`;
+  }
+
+  query += ' ORDER BY lower(p.project_name), c.created_at';
+
+  const result = await pool.query(query, params);
+  const projectMap = new Map();
+
+  for (const row of result.rows) {
+    if (!projectMap.has(row.id)) {
+      projectMap.set(row.id, {
+        id: row.id,
+        project_name: row.project_name,
+        chain: row.chain,
+        submitted_by: row.submitted_by,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        channels: []
+      });
+    }
+
+    if (row.channel_id) {
+      projectMap.get(row.id).channels.push({
+        id: row.channel_id,
+        label: row.label,
+        channel_link: row.channel_link,
+        submitted_by: row.channel_submitted_by,
+        created_at: row.channel_created_at
+      });
+    }
+  }
+
+  return Array.from(projectMap.values());
+}
+
+async function updateWalletMessage(guildId) {
+  try {
+    await ensureServerConfigRow(guildId);
+    const config = await getServerConfigRow(guildId);
+    if (!config || !config.wallet_channel_id) {
+      return;
+    }
+
+    const channel = await client.channels.fetch(config.wallet_channel_id).catch(() => null);
+
+    if (!channel || !channel.isTextBased()) {
+      console.warn(`Wallet channel not accessible for guild ${guildId}`);
+      return;
+    }
+
+    const projects = await getWalletProjectsWithChannels(guildId);
+    const embed = buildWalletEmbed(projects, {});
+
+    let messageId = config.wallet_message_id;
+
+    if (messageId) {
+      try {
+        const existingMessage = await channel.messages.fetch(messageId);
+        await existingMessage.edit({ embeds: [embed] });
+        if (!existingMessage.pinned) {
+          await existingMessage.pin().catch(() => {});
+        }
+        return;
+      } catch (error) {
+        console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
+        messageId = null;
+      }
+    }
+
+    const sentMessage = await channel.send({ embeds: [embed] });
+    await pool.query(
+      'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
+      [sentMessage.id, guildId]
+    );
+    await sentMessage.pin().catch(() => {});
+  } catch (error) {
+    console.error('Error updating wallet message:', error);
+  }
+}
+
+function buildWalletEmbed(projects, { chainFilter = null } = {}) {
+  const embed = new EmbedBuilder()
+    .setTitle('📋 Proyectos con submit de wallets')
+    .setColor(0x3B82F6)
+    .setTimestamp(new Date());
+
+  if (!projects || projects.length === 0) {
+    if (chainFilter) {
+      embed.setDescription(`No hay proyectos registrados para la red **${chainFilter.toUpperCase()}**.`);
+    } else {
+      embed.setDescription('No hay proyectos registrados todavía. Usa `/wallet add` para agregar uno.');
+    }
+    return embed;
+  }
+
+  let description = '';
+  let countIncluded = 0;
+
+  for (const [index, project] of projects.entries()) {
+    const header = `${index + 1}. **${escapeMarkdown(project.project_name)}** (${project.chain.toUpperCase()})`;
+    const channelLines = project.channels.length > 0
+      ? project.channels.map(channel => {
+          const label = channel.label ? escapeMarkdown(channel.label) : 'Canal';
+          return `   • [${label}](${channel.channel_link})`;
+        })
+      : ['   • Sin canales registrados'];
+
+    const block = [header, ...channelLines].join('\n');
+
+    if ((description + '\n' + block).length > 4000) {
+      break;
+    }
+
+    description += (description ? '\n' : '') + block;
+    countIncluded++;
+  }
+
+  embed.setDescription(description);
+
+  if (countIncluded < projects.length) {
+    embed.addFields({
+      name: 'Más proyectos',
+      value: `... y ${projects.length - countIncluded} proyectos más. Usa \\/wallet list para ver el listado completo.`
+    });
+  }
+
+  const footerChain = chainFilter ? `${chainFilter.toUpperCase()} • ` : '';
+  embed.setFooter({ text: `${footerChain}${projects.length} proyecto(s) registrado(s)` });
+
+  return embed;
+}
+
+function escapeMarkdown(text = '') {
+  return text.replace(/([\\*_`~|])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+}
+
+function isValidUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (error) {
+    return false;
+  }
+}
