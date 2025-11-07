@@ -31,10 +31,10 @@
 - `/twitter test <username>` - Probar acceso a una cuenta
 
 ### 📥 Submit Wallets
-- `/wallet add <proyecto> <link>` - Registrar un proyecto y su canal de submit
-- `/wallet list` - Ver proyectos registrados (lista alfabética)
-- `/wallet edit <proyecto>` - Actualizar nombre o link
-- `/wallet remove <proyecto>` - Eliminar un proyecto de la lista
+- `/wallet add project:<nombre> chain:<monad|eth|solana|base|other> link:<url> [label:<texto>]` - Registrar un proyecto y sus canales por red
+- `/wallet list [chain:<all|monad|eth|solana|base|other>]` - Ver proyectos registrados y filtrar por red
+- `/wallet edit project:<nombre> [chain:<actual>] [new_name:<texto>] [new_chain:<cadena>] [channel_label:<etiqueta>] [channel_link:<url>] [new_label:<texto>] [new_link:<url>]` - Actualizar datos de proyecto o canales individuales
+- `/wallet remove project:<nombre> [chain:<cadena>] [label:<etiqueta>] [link:<url>]` - Eliminar un proyecto completo o canales específicos
 - `/wallet channel_set <canal>` - Configurar canal donde se publica la lista
 - `/wallet channel_clear` - Limpiar canal configurado
 
