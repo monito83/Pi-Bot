@@ -771,7 +771,11 @@ const commands = [
     .addSubcommand(subcommand =>
       subcommand
         .setName('channel_clear')
-        .setDescription('Limpiar la configuración de canal para la lista'))
+        .setDescription('Limpiar la configuración de canal para la lista')),
+
+  new SlashCommandBuilder()
+    .setName('wallet')
+    .setDescription('Gestionar lista de proyectos con submit de wallets')
     .addSubcommand(subcommand =>
       subcommand
         .setName('menu')
@@ -779,7 +783,148 @@ const commands = [
     .addSubcommand(subcommand =>
       subcommand
         .setName('add')
-        .setDescription('Agregar un proyecto y su canal de submit'))
+        .setDescription('Agregar un proyecto y su canal de submit')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto')
+            .setRequired(true)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('chain')
+            .setDescription('Red del proyecto')
+            .setRequired(true)
+            .addChoices(
+              { name: 'Monad', value: 'monad' },
+              { name: 'Ethereum', value: 'eth' },
+              { name: 'Solana', value: 'solana' },
+              { name: 'Base', value: 'base' },
+              { name: 'Otro', value: 'other' }
+            ))
+        .addStringOption(option =>
+          option.setName('link')
+            .setDescription('Link al canal del submit')
+            .setRequired(true)
+            .setMaxLength(2000))
+        .addStringOption(option =>
+          option.setName('label')
+            .setDescription('Etiqueta del canal (ej. FCFS, GTD)')
+            .setRequired(false)
+            .setMaxLength(100)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('list')
+        .setDescription('Mostrar proyectos registrados')
+        .addStringOption(option =>
+          option.setName('chain')
+            .setDescription('Filtrar por red')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Todas', value: 'all' },
+              { name: 'Monad', value: 'monad' },
+              { name: 'Ethereum', value: 'eth' },
+              { name: 'Solana', value: 'solana' },
+              { name: 'Base', value: 'base' },
+              { name: 'Otro', value: 'other' }
+            )))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Eliminar un proyecto de la lista')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto a eliminar')
+            .setRequired(true)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('chain')
+            .setDescription('Red del proyecto (si existe en varias)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Monad', value: 'monad' },
+              { name: 'Ethereum', value: 'eth' },
+              { name: 'Solana', value: 'solana' },
+              { name: 'Base', value: 'base' },
+              { name: 'Otro', value: 'other' }
+            ))
+        .addStringOption(option =>
+          option.setName('label')
+            .setDescription('Etiqueta del canal a eliminar')
+            .setRequired(false)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('link')
+            .setDescription('Link exacto del canal a eliminar')
+            .setRequired(false)
+            .setMaxLength(2000)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('edit')
+        .setDescription('Actualizar datos de un proyecto registrado')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto a editar')
+            .setRequired(true)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('chain')
+            .setDescription('Red actual del proyecto')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Monad', value: 'monad' },
+              { name: 'Ethereum', value: 'eth' },
+              { name: 'Solana', value: 'solana' },
+              { name: 'Base', value: 'base' },
+              { name: 'Otro', value: 'other' }
+            ))
+        .addStringOption(option =>
+          option.setName('new_name')
+            .setDescription('Nuevo nombre del proyecto')
+            .setRequired(false)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('new_chain')
+            .setDescription('Nueva red del proyecto')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Monad', value: 'monad' },
+              { name: 'Ethereum', value: 'eth' },
+              { name: 'Solana', value: 'solana' },
+              { name: 'Base', value: 'base' },
+              { name: 'Otro', value: 'other' }
+            ))
+        .addStringOption(option =>
+          option.setName('channel_label')
+            .setDescription('Etiqueta del canal que deseas editar')
+            .setRequired(false)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('channel_link')
+            .setDescription('Link actual del canal que deseas editar')
+            .setRequired(false)
+            .setMaxLength(2000))
+        .addStringOption(option =>
+          option.setName('new_label')
+            .setDescription('Nueva etiqueta para el canal')
+            .setRequired(false)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('new_link')
+            .setDescription('Nuevo link para el canal')
+            .setRequired(false)
+            .setMaxLength(2000)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_set')
+        .setDescription('Configurar el canal donde se mostrará la lista')
+        .addChannelOption(option =>
+          option.setName('channel')
+            .setDescription('Canal para publicar la lista de submit wallets')
+            .setRequired(true)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_clear')
+        .setDescription('Limpiar la configuración de canal para la lista'))
 ];
 console.log('Comandos a registrar:', commands.map(cmd => cmd.name));
 // Registrar comandos
