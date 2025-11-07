@@ -1,6 +1,6 @@
 console.log('🔥 LOG 1: Starting to load modules...');
 console.log('🔥 ULTRA SIMPLE TEST v2: This code is definitely running!');
-const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType } = require('discord.js');
 console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
 console.log('🔥 LOG 3: PostgreSQL loaded');
@@ -122,7 +122,7 @@ async function initializeAlertHistory() {
       await pool.query(`
         CREATE TABLE alert_history (
           id SERIAL PRIMARY KEY,
-          project_id INTEGER NOT NULL REFERENCES nft_projects(id),
+          project_id UUID NOT NULL REFERENCES nft_projects(id) ON DELETE CASCADE,
           alert_type TEXT NOT NULL,
           alert_value TEXT NOT NULL,
           sent_at TIMESTAMP DEFAULT NOW()
@@ -183,8 +183,49 @@ async function initializeTwitterTables() {
   }
 }
 
+async function initializeWalletSchema() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wallet_projects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        guild_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        channel_link TEXT NOT NULL,
+        submitted_by TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_projects_unique
+      ON wallet_projects (guild_id, lower(project_name))
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_wallet_projects_guild
+      ON wallet_projects (guild_id)
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_config
+      ADD COLUMN IF NOT EXISTS wallet_channel_id TEXT
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_config
+      ADD COLUMN IF NOT EXISTS wallet_message_id TEXT
+    `);
+
+    console.log('✅ Wallet schema initialized');
+  } catch (error) {
+    console.error('Error initializing wallet schema:', error);
+  }
+}
+
 // Inicializar tablas de Twitter
 initializeTwitterTables();
+initializeWalletSchema();
 
 // Forzar creación de tabla alert_history después de un delay
 setTimeout(async () => {
@@ -193,7 +234,7 @@ setTimeout(async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS alert_history (
         id SERIAL PRIMARY KEY,
-        project_id INTEGER NOT NULL REFERENCES nft_projects(id),
+        project_id UUID NOT NULL REFERENCES nft_projects(id) ON DELETE CASCADE,
         alert_type TEXT NOT NULL,
         alert_value TEXT NOT NULL,
         sent_at TIMESTAMP DEFAULT NOW()
@@ -454,9 +495,72 @@ const commands = [
         .addStringOption(option =>
           option.setName('username')
             .setDescription('Nombre de usuario de Twitter (sin @)')
-            .setRequired(true)))
-];
+            .setRequired(true))),
 
+  new SlashCommandBuilder()
+    .setName('wallet')
+    .setDescription('Gestionar lista de proyectos con submit de wallets')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('add')
+        .setDescription('Agregar un proyecto y su canal de submit')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto')
+            .setRequired(true)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('link')
+            .setDescription('Link al canal del submit')
+            .setRequired(true)
+            .setMaxLength(2000)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('list')
+        .setDescription('Mostrar proyectos registrados'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('remove')
+        .setDescription('Eliminar un proyecto de la lista')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto a eliminar')
+            .setRequired(true)
+            .setMaxLength(100)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('edit')
+        .setDescription('Actualizar datos de un proyecto registrado')
+        .addStringOption(option =>
+          option.setName('project')
+            .setDescription('Nombre del proyecto a editar')
+            .setRequired(true)
+            .setMaxLength(100))
+        .addStringOption(option =>
+          option.setName('link')
+            .setDescription('Nuevo link del canal')
+            .setRequired(false)
+            .setMaxLength(2000))
+        .addStringOption(option =>
+          option.setName('new_name')
+            .setDescription('Nuevo nombre del proyecto')
+            .setRequired(false)
+            .setMaxLength(100)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_set')
+        .setDescription('Configurar el canal donde se mostrará la lista')
+        .addChannelOption(option =>
+          option.setName('channel')
+            .setDescription('Canal para publicar la lista de submit wallets')
+            .setRequired(true)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_clear')
+        .setDescription('Limpiar la configuración de canal para la lista'))
+];
+console.log('Comandos a registrar:', commands.map(cmd => cmd.name));
 // Registrar comandos
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
@@ -1389,6 +1493,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'twitter':
         await handleTwitterCommand(interaction);
         break;
+      case 'wallet':
+        await handleWalletCommand(interaction);
+        break;
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
@@ -1428,6 +1535,7 @@ client.on('interactionCreate', async interaction => {
       await interaction.respond(
         filtered.map(project => ({ name: project, value: project }))
       );
+      return;
     }
     
     // Autocompletado para cuentas de Twitter
@@ -1440,6 +1548,29 @@ client.on('interactionCreate', async interaction => {
       await interaction.respond(
         filtered.map(account => ({ name: `@${account}`, value: account }))
       );
+      return;
+    }
+
+    if (interaction.commandName === 'wallet') {
+      let subcommand;
+      try {
+        subcommand = interaction.options.getSubcommand();
+      } catch (error) {
+        subcommand = null;
+      }
+
+      if (subcommand === 'remove' || subcommand === 'edit') {
+        const projects = await getWalletProjectNames(interaction.guildId);
+        const filtered = projects
+          .filter(project => project.toLowerCase().includes(focusedValue.toLowerCase()))
+          .slice(0, 25);
+
+        await interaction.respond(
+          filtered.map(project => ({ name: project, value: project }))
+        );
+      } else {
+        await interaction.respond([]);
+      }
     }
   } catch (error) {
     console.error('Error handling autocomplete:', error);
@@ -3604,6 +3735,406 @@ async function handleTwitterTest(interaction) {
   }
 }
 
+// Manejar comandos de wallet
+async function handleWalletCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+
+  switch (subcommand) {
+    case 'add':
+      await handleWalletAdd(interaction);
+      break;
+    case 'list':
+      await handleWalletList(interaction);
+      break;
+    case 'remove':
+      await handleWalletRemove(interaction);
+      break;
+    case 'edit':
+      await handleWalletEdit(interaction);
+      break;
+    case 'channel_set':
+      await handleWalletChannelSet(interaction);
+      break;
+    case 'channel_clear':
+      await handleWalletChannelClear(interaction);
+      break;
+    default:
+      await interaction.reply({ content: '❌ Subcomando no soportado.', ephemeral: true });
+  }
+}
+
+async function handleWalletAdd(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const link = interaction.options.getString('link').trim();
+  const guildId = interaction.guildId;
+
+  if (!projectName) {
+    await interaction.editReply({ content: '❌ Debes proporcionar un nombre de proyecto.' });
+    return;
+  }
+
+  if (!isValidUrl(link)) {
+    await interaction.editReply({ content: '❌ Link inválido. Debe comenzar con http:// o https://.' });
+    return;
+  }
+
+  try {
+    await ensureServerConfigRow(guildId);
+
+    const existing = await pool.query(
+      'SELECT id FROM wallet_projects WHERE guild_id = $1 AND lower(project_name) = lower($2)',
+      [guildId, projectName]
+    );
+
+    if (existing.rows.length > 0) {
+      await interaction.editReply({ content: '❌ Ya existe un proyecto con ese nombre en la lista.' });
+      return;
+    }
+
+    await pool.query(
+      'INSERT INTO wallet_projects (guild_id, project_name, channel_link, submitted_by) VALUES ($1, $2, $3, $4)',
+      [guildId, projectName, link, interaction.user.id]
+    );
+
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `✅ Proyecto **${projectName}** agregado correctamente.` });
+  } catch (error) {
+    console.error('Error in handleWalletAdd:', error);
+    await interaction.editReply({ content: '❌ No se pudo agregar el proyecto. Intenta nuevamente.' });
+  }
+}
+
+async function handleWalletList(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const projects = await getWalletProjects(interaction.guildId);
+    const embed = buildWalletEmbed(projects);
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error in handleWalletList:', error);
+    await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
+  }
+}
+
+async function handleWalletRemove(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const guildId = interaction.guildId;
+
+  if (!projectName) {
+    await interaction.editReply({ content: '❌ Debes indicar el nombre del proyecto.' });
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM wallet_projects WHERE guild_id = $1 AND lower(project_name) = lower($2) RETURNING project_name',
+      [guildId, projectName]
+    );
+
+    if (result.rows.length === 0) {
+      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+      return;
+    }
+
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `🗑️ Proyecto **${result.rows[0].project_name}** eliminado.` });
+  } catch (error) {
+    console.error('Error in handleWalletRemove:', error);
+    await interaction.editReply({ content: '❌ No se pudo eliminar el proyecto.' });
+  }
+}
+
+async function handleWalletEdit(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const projectName = interaction.options.getString('project').trim();
+  const newLink = interaction.options.getString('link');
+  const newName = interaction.options.getString('new_name');
+  const guildId = interaction.guildId;
+
+  if (!newLink && !newName) {
+    await interaction.editReply({ content: '❌ Debes proporcionar un nuevo link o un nuevo nombre.' });
+    return;
+  }
+
+  try {
+    const projectResult = await pool.query(
+      'SELECT * FROM wallet_projects WHERE guild_id = $1 AND lower(project_name) = lower($2)',
+      [guildId, projectName]
+    );
+
+    if (projectResult.rows.length === 0) {
+      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+      return;
+    }
+
+    const project = projectResult.rows[0];
+    let updatedName = project.project_name;
+    let updatedLink = project.channel_link;
+
+    if (newName) {
+      const trimmedName = newName.trim();
+      if (!trimmedName) {
+        await interaction.editReply({ content: '❌ El nuevo nombre no puede estar vacío.' });
+        return;
+      }
+
+      const duplicateCheck = await pool.query(
+        'SELECT id FROM wallet_projects WHERE guild_id = $1 AND lower(project_name) = lower($2) AND id <> $3',
+        [guildId, trimmedName, project.id]
+      );
+
+      if (duplicateCheck.rows.length > 0) {
+        await interaction.editReply({ content: '❌ Ya existe otro proyecto con ese nombre.' });
+        return;
+      }
+
+      updatedName = trimmedName;
+    }
+
+    if (newLink) {
+      const trimmedLink = newLink.trim();
+      if (!isValidUrl(trimmedLink)) {
+        await interaction.editReply({ content: '❌ El link proporcionado no es válido.' });
+        return;
+      }
+      updatedLink = trimmedLink;
+    }
+
+    await pool.query(
+      'UPDATE wallet_projects SET project_name = $1, channel_link = $2, updated_at = NOW() WHERE id = $3',
+      [updatedName, updatedLink, project.id]
+    );
+
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `✏️ Proyecto actualizado: **${updatedName}**.` });
+  } catch (error) {
+    console.error('Error in handleWalletEdit:', error);
+    await interaction.editReply({ content: '❌ No se pudo actualizar el proyecto.' });
+  }
+}
+
+async function handleWalletChannelSet(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const channel = interaction.options.getChannel('channel');
+  const guildId = interaction.guildId;
+
+  if (!channel || !channel.isTextBased()) {
+    await interaction.editReply({ content: '❌ Debes seleccionar un canal de texto válido.' });
+    return;
+  }
+
+  if (channel.guildId && channel.guildId !== guildId) {
+    await interaction.editReply({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
+    return;
+  }
+
+  try {
+    await ensureServerConfigRow(guildId);
+
+    await pool.query(
+      `UPDATE server_config
+       SET wallet_channel_id = $1,
+           wallet_message_id = NULL,
+           updated_at = NOW()
+       WHERE guild_id = $2`,
+      [channel.id, guildId]
+    );
+
+    await updateWalletMessage(guildId);
+
+    await interaction.editReply({ content: `✅ Canal configurado: <#${channel.id}>` });
+  } catch (error) {
+    console.error('Error in handleWalletChannelSet:', error);
+    await interaction.editReply({ content: '❌ No se pudo configurar el canal.' });
+  }
+}
+
+async function handleWalletChannelClear(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const guildId = interaction.guildId;
+
+  try {
+    const config = await getServerConfigRow(guildId);
+
+    await pool.query(
+      `UPDATE server_config
+       SET wallet_channel_id = NULL,
+           wallet_message_id = NULL,
+           updated_at = NOW()
+       WHERE guild_id = $1`,
+      [guildId]
+    );
+
+    // Intentar eliminar mensaje existente si se guardó
+    if (config?.wallet_channel_id && config?.wallet_message_id) {
+      const channel = await client.channels.fetch(config.wallet_channel_id).catch(() => null);
+      if (channel && channel.isTextBased()) {
+        try {
+          const message = await channel.messages.fetch(config.wallet_message_id);
+          await message.unpin().catch(() => {});
+          await message.delete().catch(() => {});
+        } catch (error) {
+          console.log('No se pudo eliminar el mensaje de wallet existente:', error.message);
+        }
+      }
+    }
+
+    await interaction.editReply({ content: '✅ Canal de wallet reseteado.' });
+  } catch (error) {
+    console.error('Error in handleWalletChannelClear:', error);
+    await interaction.editReply({ content: '❌ No se pudo limpiar la configuración de canal.' });
+  }
+}
+
+async function ensureServerConfigRow(guildId) {
+  try {
+    await pool.query(
+      'INSERT INTO server_config (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING',
+      [guildId]
+    );
+  } catch (error) {
+    console.error('Error ensuring server config row:', error);
+  }
+}
+
+async function getServerConfigRow(guildId) {
+  const result = await pool.query('SELECT * FROM server_config WHERE guild_id = $1', [guildId]);
+  return result.rows[0] || null;
+}
+
+async function getWalletProjects(guildId) {
+  const result = await pool.query(
+    `SELECT project_name, channel_link, submitted_by, created_at
+     FROM wallet_projects
+     WHERE guild_id = $1
+     ORDER BY lower(project_name)`,
+    [guildId]
+  );
+  return result.rows;
+}
+
+async function getWalletProjectNames(guildId) {
+  const result = await pool.query(
+    `SELECT project_name
+     FROM wallet_projects
+     WHERE guild_id = $1
+     ORDER BY lower(project_name)`,
+    [guildId]
+  );
+  return result.rows.map(row => row.project_name);
+}
+
+async function updateWalletMessage(guildId) {
+  try {
+    await ensureServerConfigRow(guildId);
+    const config = await getServerConfigRow(guildId);
+    if (!config || !config.wallet_channel_id) {
+      return;
+    }
+
+    const channel = await client.channels.fetch(config.wallet_channel_id).catch(() => null);
+
+    if (!channel || !channel.isTextBased()) {
+      console.warn(`Wallet channel not accessible for guild ${guildId}`);
+      return;
+    }
+
+    const projects = await getWalletProjects(guildId);
+    const embed = buildWalletEmbed(projects);
+
+    let messageId = config.wallet_message_id;
+
+    if (messageId) {
+      try {
+        const existingMessage = await channel.messages.fetch(messageId);
+        await existingMessage.edit({ embeds: [embed] });
+        if (!existingMessage.pinned) {
+          await existingMessage.pin().catch(() => {});
+        }
+        return;
+      } catch (error) {
+        console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
+        messageId = null;
+      }
+    }
+
+    const sentMessage = await channel.send({ embeds: [embed] });
+    await pool.query(
+      'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
+      [sentMessage.id, guildId]
+    );
+    await sentMessage.pin().catch(() => {});
+  } catch (error) {
+    console.error('Error updating wallet message:', error);
+  }
+}
+
+function buildWalletEmbed(projects) {
+  const embed = new EmbedBuilder()
+    .setTitle('📋 Proyectos con submit de wallets')
+    .setColor(0x3B82F6)
+    .setTimestamp(new Date());
+
+  if (!projects || projects.length === 0) {
+    embed.setDescription('No hay proyectos registrados todavía. Usa `/wallet add` para agregar uno.');
+    return embed;
+  }
+
+  const lines = projects.map((project, index) => {
+    const safeName = escapeMarkdown(project.project_name);
+    const submitted = project.submitted_by ? `<@${project.submitted_by}>` : 'Desconocido';
+    return `${index + 1}. [${safeName}](${project.channel_link}) — agregado por ${submitted}`;
+  });
+
+  let description = '';
+  let countIncluded = 0;
+  for (const line of lines) {
+    if ((description + line + '\n').length > 4000) {
+      break;
+    }
+    description += (description ? '\n' : '') + line;
+    countIncluded++;
+  }
+
+  embed.setDescription(description);
+
+  if (countIncluded < lines.length) {
+    embed.addFields({
+      name: 'Más proyectos',
+      value: `... y ${lines.length - countIncluded} proyectos más. Usa \\/wallet list para ver el listado completo.`
+    });
+  }
+
+  embed.setFooter({ text: `${projects.length} proyecto(s) registrado(s)` });
+
+  return embed;
+}
+
+function escapeMarkdown(text = '') {
+  return text.replace(/([\\*_`~|])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+}
+
+function isValidUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (error) {
+    return false;
+  }
+}
+
 // Manejar comando menu
 async function handleMenuCommand(interaction) {
   try {
@@ -3877,43 +4408,44 @@ async function initializeDatabase() {
     // Crear tablas principales si no existen
     await pool.query(`
       CREATE TABLE IF NOT EXISTS nft_projects (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) UNIQUE NOT NULL,
-        contract_address VARCHAR(42) UNIQUE NOT NULL,
-        marketplace VARCHAR(50) DEFAULT 'magic-eden',
-        status VARCHAR(20) DEFAULT 'active',
-        last_floor_price DECIMAL(20,8) DEFAULT 0,
-        last_volume DECIMAL(20,8) DEFAULT 0,
-        last_sales_count INTEGER DEFAULT 0,
-        last_listings_count INTEGER DEFAULT 0,
-        last_avg_sale_price DECIMAL(20,8) DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW(),
-        last_update TIMESTAMP DEFAULT NOW()
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL UNIQUE,
+        contract_address TEXT NOT NULL,
+        marketplace TEXT DEFAULT 'magic-eden',
+        status TEXT DEFAULT 'active',
+        last_floor_price DECIMAL,
+        last_volume DECIMAL,
+        last_sales_count INTEGER,
+        last_listings_count INTEGER,
+        last_avg_sale_price DECIMAL,
+        last_update TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS price_history (
-        id SERIAL PRIMARY KEY,
-        project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
-        floor_price DECIMAL(20,8) NOT NULL,
-        volume_24h DECIMAL(20,8) DEFAULT 0,
-        sales_count INTEGER DEFAULT 0,
-        listings_count INTEGER DEFAULT 0,
-        avg_sale_price DECIMAL(20,8) DEFAULT 0,
-        recorded_at TIMESTAMP DEFAULT NOW()
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID REFERENCES nft_projects(id) ON DELETE CASCADE,
+        floor_price DECIMAL,
+        volume_24h DECIMAL,
+        sales_count INTEGER,
+        listings_count INTEGER,
+        avg_sale_price DECIMAL,
+        recorded_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_alerts (
-        id SERIAL PRIMARY KEY,
-        discord_user_id VARCHAR(20) NOT NULL,
-        project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        discord_user_id TEXT NOT NULL,
+        project_id UUID REFERENCES nft_projects(id) ON DELETE CASCADE,
         alert_types JSONB DEFAULT '[]',
         is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(discord_user_id, project_id)
       );
     `);
@@ -3948,7 +4480,7 @@ async function initializeAlertHistory() {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS alert_history (
           id SERIAL PRIMARY KEY,
-          project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
+          project_id UUID REFERENCES nft_projects(id) ON DELETE CASCADE,
           alert_type VARCHAR(50) NOT NULL,
           alert_value VARCHAR(100) NOT NULL,
           created_at TIMESTAMP DEFAULT NOW()
@@ -5219,7 +5751,7 @@ setTimeout(async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS alert_history (
         id SERIAL PRIMARY KEY,
-        project_id INTEGER REFERENCES nft_projects(id) ON DELETE CASCADE,
+        project_id UUID REFERENCES nft_projects(id) ON DELETE CASCADE,
         alert_type VARCHAR(50) NOT NULL,
         alert_value VARCHAR(100) NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()

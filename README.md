@@ -30,6 +30,14 @@
 - `/twitter list` - Listar cuentas monitoreadas
 - `/twitter test <username>` - Probar acceso a una cuenta
 
+### 📥 Submit Wallets
+- `/wallet add <proyecto> <link>` - Registrar un proyecto y su canal de submit
+- `/wallet list` - Ver proyectos registrados (lista alfabética)
+- `/wallet edit <proyecto>` - Actualizar nombre o link
+- `/wallet remove <proyecto>` - Eliminar un proyecto de la lista
+- `/wallet channel_set <canal>` - Configurar canal donde se publica la lista
+- `/wallet channel_clear` - Limpiar canal configurado
+
 ## 🚀 Instalación
 
 ```bash

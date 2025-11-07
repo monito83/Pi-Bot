@@ -44,6 +44,32 @@ CREATE TABLE IF NOT EXISTS price_history (
   recorded_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Create Alert History table
+CREATE TABLE IF NOT EXISTS alert_history (
+  id SERIAL PRIMARY KEY,
+  project_id UUID REFERENCES nft_projects(id) ON DELETE CASCADE,
+  alert_type TEXT NOT NULL,
+  alert_value TEXT NOT NULL,
+  sent_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Create Wallet Projects table
+CREATE TABLE IF NOT EXISTS wallet_projects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  guild_id TEXT NOT NULL,
+  project_name TEXT NOT NULL,
+  channel_link TEXT NOT NULL,
+  submitted_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indexes for wallet projects
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_projects_unique
+  ON wallet_projects (guild_id, lower(project_name));
+CREATE INDEX IF NOT EXISTS idx_wallet_projects_guild
+  ON wallet_projects (guild_id);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_nft_projects_status ON nft_projects(status);
 CREATE INDEX IF NOT EXISTS idx_nft_projects_name ON nft_projects(name);
