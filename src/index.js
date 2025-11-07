@@ -3810,13 +3810,13 @@ async function handleWalletAdd(interaction) {
 
   if (!projectName) {
     await interaction.editReply({ content: '❌ Debes proporcionar un nombre de proyecto.' });
-    return;
-  }
+      return;
+    }
 
   if (!isValidUrl(link)) {
     await interaction.editReply({ content: '❌ Link inválido. Debe comenzar con http:// o https://.' });
-    return;
-  }
+      return;
+    }
 
   try {
     await ensureServerConfigRow(guildId);
@@ -3865,10 +3865,10 @@ async function handleWalletAdd(interaction) {
 
     if (createdNew) {
       await interaction.editReply({ content: `✅ Proyecto **${projectName}** (${chain.toUpperCase()}) agregado con su primer canal.` });
-          } else {
+    } else {
       await interaction.editReply({ content: `✅ Canal agregado al proyecto **${projectName}** (${chain.toUpperCase()}).` });
     }
-            } catch (error) {
+  } catch (error) {
     console.error('Error in handleWalletAdd:', error);
     await interaction.editReply({ content: '❌ No se pudo agregar el proyecto. Intenta nuevamente.' });
   }
@@ -3954,13 +3954,13 @@ async function handleWalletRemove(interaction) {
         await interaction.editReply({ content: `🗑️ Se eliminaron los canales y el proyecto **${project.project_name}** (${project.chain.toUpperCase()}) quedó vacío, por lo que también se eliminó.` });
         return;
       }
-
+      
       await pool.query('UPDATE wallet_projects SET updated_at = NOW() WHERE id = $1', [project.id]);
       await updateWalletMessage(guildId);
       await interaction.editReply({ content: `🗑️ Canal eliminado para **${project.project_name}** (${project.chain.toUpperCase()}).` });
-      return;
-    }
-
+        return;
+      }
+      
     await pool.query('DELETE FROM wallet_projects WHERE id = $1', [project.id]);
     await updateWalletMessage(guildId);
 
@@ -3996,7 +3996,7 @@ async function handleWalletEdit(interaction) {
 
     if (resolution.error === 'not_found') {
       await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
-      return;
+            return;
     }
 
     if (resolution.error === 'ambiguous') {
@@ -4013,7 +4013,7 @@ async function handleWalletEdit(interaction) {
         await interaction.editReply({ content: '❌ El nuevo nombre no puede estar vacío.' });
       return;
     }
-
+    
       const duplicateCheck = await pool.query(
         `SELECT id FROM wallet_projects
          WHERE guild_id = $1 AND lower(project_name) = lower($2) AND lower(chain) = lower($3) AND id <> $4`,
@@ -4022,9 +4022,9 @@ async function handleWalletEdit(interaction) {
 
       if (duplicateCheck.rows.length > 0) {
         await interaction.editReply({ content: '❌ Ya existe otro proyecto con ese nombre en esa red.' });
-        return;
-      }
-
+      return;
+    }
+    
       await pool.query('UPDATE wallet_projects SET project_name = $1, updated_at = NOW() WHERE id = $2', [newName, project.id]);
       project.project_name = newName;
       appliedChanges.push('nombre');
@@ -4067,9 +4067,9 @@ async function handleWalletEdit(interaction) {
 
       if (channelResult.rows.length === 0) {
         await interaction.editReply({ content: '❌ No se encontró un canal que coincida con los datos proporcionados.' });
-      return;
-    }
-
+          return;
+        }
+        
       const channel = channelResult.rows[0];
       const updates = [];
       const updateParams = [];
@@ -4283,14 +4283,14 @@ async function updateWalletMessage(guildId) {
     if (!config || !config.wallet_channel_id) {
       return;
     }
-
+    
     const channel = await client.channels.fetch(config.wallet_channel_id).catch(() => null);
-
+    
     if (!channel || !channel.isTextBased()) {
       console.warn(`Wallet channel not accessible for guild ${guildId}`);
       return;
     }
-
+    
     const projects = await getWalletProjectsWithChannels(guildId);
     const embed = buildWalletEmbed(projects, {});
 
@@ -4303,7 +4303,7 @@ async function updateWalletMessage(guildId) {
         if (!existingMessage.pinned) {
           await existingMessage.pin().catch(() => {});
         }
-        return;
+      return;
       } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
@@ -4384,6 +4384,22 @@ function isValidUrl(value) {
   } catch (error) {
     return false;
   }
+}
+
+async function ensureServerConfigRow(guildId) {
+  try {
+    await pool.query(
+      'INSERT INTO server_config (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING',
+      [guildId]
+    );
+  } catch (error) {
+    console.error('Error ensuring server config row:', error);
+  }
+}
+
+async function getServerConfigRow(guildId) {
+  const result = await pool.query('SELECT * FROM server_config WHERE guild_id = $1', [guildId]);
+  return result.rows[0] || null;
 }
 
 client.login(DISCORD_TOKEN).catch(error => {
