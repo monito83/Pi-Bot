@@ -1666,6 +1666,7 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
+  console.log(`⚙️ Received slash command: ${commandName}`);
 
   try {
     switch (commandName) {
@@ -3804,6 +3805,8 @@ async function handleWalletAdd(interaction) {
   const link = interaction.options.getString('link').trim();
   const label = interaction.options.getString('label')?.trim() || null;
   const guildId = interaction.guildId;
+
+  console.log('⚙️ handleWalletAdd invoked', { projectName, chain, link, label, guildId });
 
   if (!projectName) {
     await interaction.editReply({ content: '❌ Debes proporcionar un nombre de proyecto.' });
