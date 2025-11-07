@@ -4385,3 +4385,16 @@ function isValidUrl(value) {
     return false;
   }
 }
+
+client.login(DISCORD_TOKEN).catch(error => {
+  console.error('❌ Error iniciando sesión en Discord:', error);
+});
+
+process.on('unhandledRejection', error => {
+  console.error('Unhandled promise rejection:', error);
+});
+
+process.on('uncaughtException', error => {
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
