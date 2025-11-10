@@ -1740,7 +1740,7 @@ client.on('interactionCreate', async interaction => {
     const focused = interaction.options.getFocused(true);
     const focusedValue = focused.value ?? '';
     const focusedName = focused.name;
-
+    
     if (interaction.commandName === 'status' || 
         interaction.commandName === 'floor' || 
         interaction.commandName === 'volume' ||
@@ -1784,46 +1784,48 @@ client.on('interactionCreate', async interaction => {
       }
 
       if ((subcommand === 'remove' || subcommand === 'edit') && focusedName === 'project') {
-        const projects = await getWalletProjectNames(interaction.guildId);
-        const filtered = projects
-          .filter(project => project.toLowerCase().includes(focusedValue.toLowerCase()))
-          .slice(0, 25);
-
-        await interaction.respond(
-          filtered.map(project => ({ name: project, value: project }))
-        );
+        const suggestions = await getWalletProjectSuggestions(interaction.guildId, focusedValue);
+        await interaction.respond(suggestions);
         return;
       }
 
       if (subcommand === 'remove' && focusedName === 'label') {
-        const projectName = interaction.options.getString('project');
-        if (!projectName) {
+        const projectRaw = interaction.options.getString('project');
+        const { projectId, projectName } = parseWalletProjectOption(projectRaw);
+
+        if (!projectId && !projectName) {
           await interaction.respond([]);
           return;
         }
 
-        const channelLabels = await getWalletChannelLabels(interaction.guildId, projectName);
-        const filtered = channelLabels
-          .filter(item => item.name.toLowerCase().includes(focusedValue.toLowerCase()))
-          .slice(0, 25);
+        const suggestions = await getWalletChannelLabelSuggestions({
+          guildId: interaction.guildId,
+          projectId,
+          projectName,
+          searchTerm: focusedValue
+        });
 
-        await interaction.respond(filtered);
+        await interaction.respond(suggestions);
         return;
       }
 
       if (subcommand === 'edit' && focusedName === 'channel_label') {
-        const projectName = interaction.options.getString('project');
-        if (!projectName) {
+        const projectRaw = interaction.options.getString('project');
+        const { projectId, projectName } = parseWalletProjectOption(projectRaw);
+
+        if (!projectId && !projectName) {
           await interaction.respond([]);
           return;
         }
 
-        const channelLabels = await getWalletChannelLabels(interaction.guildId, projectName);
-        const filtered = channelLabels
-          .filter(item => item.name.toLowerCase().includes(focusedValue.toLowerCase()))
-          .slice(0, 25);
+        const suggestions = await getWalletChannelLabelSuggestions({
+          guildId: interaction.guildId,
+          projectId,
+          projectName,
+          searchTerm: focusedValue
+        });
 
-        await interaction.respond(filtered);
+        await interaction.respond(suggestions);
         return;
       }
 
@@ -3822,6 +3824,25 @@ function normalizeChain(value, fallback = 'monad') {
   return SUPPORTED_WALLET_CHAINS.includes(normalized) ? normalized : 'other';
 }
 
+function parseWalletProjectOption(rawValue) {
+  if (!rawValue) {
+    return { projectId: null, projectName: null };
+  }
+
+  const trimmed = rawValue.trim();
+  if (trimmed.startsWith(WALLET_PROJECT_VALUE_PREFIX)) {
+    return {
+      projectId: trimmed.slice(WALLET_PROJECT_VALUE_PREFIX.length),
+      projectName: null
+    };
+  }
+
+  return {
+    projectId: null,
+    projectName: trimmed
+  };
+}
+
 async function handleWalletCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
 
@@ -3918,7 +3939,9 @@ async function handleWalletList(interaction) {
 async function handleWalletRemove(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const projectName = interaction.options.getString('project').trim();
+  const projectRaw = interaction.options.getString('project');
+  const { projectId, projectName: projectNameInput } = parseWalletProjectOption(projectRaw);
+  const projectName = projectNameInput ? projectNameInput.trim() : null;
   const chainOption = interaction.options.getString('chain');
   const chain = chainOption ? normalizeChain(chainOption) : null;
   const labelRaw = interaction.options.getString('label');
@@ -3929,26 +3952,41 @@ async function handleWalletRemove(interaction) {
   const link = interaction.options.getString('link')?.trim() || null;
   const guildId = interaction.guildId;
 
-  if (!projectName) {
+  if (!projectId && !projectName) {
     await interaction.editReply({ content: '❌ Debes indicar el nombre del proyecto.' });
-    return;
-  }
+      return;
+    }
 
   try {
-    const resolution = await resolveWalletProject(guildId, projectName, chain);
+    let project;
 
-    if (resolution.error === 'not_found') {
-      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+    if (projectId) {
+      project = await getWalletProjectById(projectId, guildId);
+      if (!project) {
+        await interaction.editReply({ content: '❌ No se encontró un proyecto con ese identificador.' });
       return;
     }
+    } else {
+      const resolution = await resolveWalletProject(guildId, projectName, chain);
 
-    if (resolution.error === 'ambiguous') {
-      const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
-      await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
-      return;
+      if (resolution.error === 'not_found') {
+        await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+        return;
+      }
+
+      if (resolution.error === 'ambiguous') {
+        const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
+        await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
+        return;
+      }
+
+      project = resolution.project;
     }
 
-    const project = resolution.project;
+    if (chain && project.chain !== chain) {
+      await interaction.editReply({ content: `❌ Ese proyecto está registrado en la red ${project.chain.toUpperCase()}.` });
+      return;
+    }
 
     if (selectedChannelId || label || link) {
       const params = [project.id];
@@ -4017,7 +4055,9 @@ async function handleWalletRemove(interaction) {
 async function handleWalletEdit(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const projectName = interaction.options.getString('project').trim();
+  const projectRaw = interaction.options.getString('project');
+  const { projectId, projectName: projectNameInput } = parseWalletProjectOption(projectRaw);
+  const projectName = projectNameInput ? projectNameInput.trim() : null;
   const chainOption = interaction.options.getString('chain');
   const chain = chainOption ? normalizeChain(chainOption) : null;
   const newName = interaction.options.getString('new_name')?.trim();
@@ -4038,21 +4078,42 @@ async function handleWalletEdit(interaction) {
     return;
   }
 
-  try {
-    const resolution = await resolveWalletProject(guildId, projectName, chain);
+  if (!projectId && !projectName) {
+    await interaction.editReply({ content: '❌ Debes indicar el nombre del proyecto.' });
+    return;
+  }
 
-    if (resolution.error === 'not_found') {
-      await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
-            return;
+  try {
+    let project;
+
+    if (projectId) {
+      project = await getWalletProjectById(projectId, guildId);
+      if (!project) {
+        await interaction.editReply({ content: '❌ No se encontró un proyecto con ese identificador.' });
+        return;
+      }
+    } else {
+      const resolution = await resolveWalletProject(guildId, projectName, chain);
+
+      if (resolution.error === 'not_found') {
+        await interaction.editReply({ content: '❌ No se encontró un proyecto con ese nombre.' });
+        return;
+      }
+
+      if (resolution.error === 'ambiguous') {
+        const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
+        await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
+        return;
+      }
+
+      project = resolution.project;
     }
 
-    if (resolution.error === 'ambiguous') {
-      const chains = resolution.chains.map(c => c.toUpperCase()).join(', ');
-      await interaction.editReply({ content: `❌ Ese proyecto existe en varias redes (${chains}). Especifica la opción 'chain' para continuar.` });
+    if (chain && project.chain !== chain) {
+      await interaction.editReply({ content: `❌ Ese proyecto está registrado en la red ${project.chain.toUpperCase()}.` });
       return;
     }
 
-    const project = resolution.project;
     const appliedChanges = [];
 
     if (newName) {
@@ -4227,7 +4288,7 @@ async function handleWalletChannelClear(interaction) {
           const message = await channel.messages.fetch(config.wallet_message_id);
           await message.unpin().catch(() => {});
           await message.delete().catch(() => {});
-    } catch (error) {
+      } catch (error) {
           console.log('No se pudo eliminar el mensaje de wallet existente:', error.message);
     }
       }
@@ -4240,15 +4301,35 @@ async function handleWalletChannelClear(interaction) {
   }
 }
 
-async function getWalletProjectNames(guildId) {
+async function getWalletProjectById(projectId, guildId) {
   const result = await pool.query(
-    `SELECT DISTINCT project_name
+    `SELECT *
+     FROM wallet_projects
+     WHERE id = $1 AND guild_id = $2`,
+    [projectId, guildId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getWalletProjectSuggestions(guildId, searchTerm, limit = 25) {
+  const normalizedSearch = (searchTerm || '').toLowerCase();
+  const pattern = normalizedSearch ? `%${normalizedSearch}%` : '%';
+
+  const result = await pool.query(
+    `SELECT id, project_name, chain
      FROM wallet_projects
      WHERE guild_id = $1
-     ORDER BY lower(project_name)` ,
-    [guildId]
+       AND lower(project_name) LIKE $2
+     ORDER BY lower(project_name), chain
+     LIMIT $3`,
+    [guildId, pattern, limit]
   );
-  return result.rows.map(row => row.project_name);
+
+  return result.rows.map(row => ({
+    name: `${row.project_name} (${row.chain.toUpperCase()})`,
+    value: `${WALLET_PROJECT_VALUE_PREFIX}${row.id}`
+  }));
 }
 
 function formatChannelOptionLabel(label, link) {
@@ -4271,19 +4352,37 @@ function formatChannelOptionLabel(label, link) {
   }
 }
 
-async function getWalletChannelLabels(guildId, projectName, { limit = 25 } = {}) {
-  const result = await pool.query(
-    `SELECT p.id AS project_id, c.id AS channel_id, c.label, c.channel_link
-     FROM wallet_projects p
-     JOIN wallet_channels c ON c.project_id = p.id
-     WHERE p.guild_id = $1 AND lower(p.project_name) = lower($2)
-     ORDER BY c.created_at
-     LIMIT $3`,
-    [guildId, projectName, limit]
-  );
+async function getWalletChannelLabelSuggestions({ guildId, projectId, projectName, searchTerm = '', limit = 25 }) {
+  const params = [guildId];
+  let query = `
+    SELECT p.id AS project_id, c.id AS channel_id, c.label, c.channel_link
+    FROM wallet_projects p
+    JOIN wallet_channels c ON c.project_id = p.id
+    WHERE p.guild_id = $1`;
+
+  if (projectId) {
+    params.push(projectId);
+    query += ` AND p.id = $${params.length}`;
+  } else if (projectName) {
+    params.push(projectName);
+    query += ` AND lower(p.project_name) = lower($${params.length})`;
+          } else {
+    return [];
+  }
+
+  const normalizedSearch = (searchTerm || '').toLowerCase();
+  if (normalizedSearch) {
+    params.push(`%${normalizedSearch}%`);
+    query += ` AND (lower(COALESCE(c.label, '')) LIKE $${params.length} OR lower(c.channel_link) LIKE $${params.length})`;
+  }
+
+  params.push(limit);
+  query += ` ORDER BY c.created_at LIMIT $${params.length}`;
+
+  const result = await pool.query(query, params);
 
   return result.rows.map(row => ({
-    name: formatChannelOptionLabel(row.label, row.channel_link),
+    name: formatChannelOptionLabel(row.label, row.channel_link).slice(0, 100),
     value: `${WALLET_CHANNEL_VALUE_PREFIX}${row.channel_id}`
   }));
 }
@@ -4392,21 +4491,21 @@ async function updateWalletMessage(guildId) {
         await existingMessage.edit({ embeds: [embed] });
         if (!existingMessage.pinned) {
           await existingMessage.pin().catch(() => {});
-        }
-      return;
-      } catch (error) {
+            }
+            return;
+        } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
     }
 
     const sentMessage = await channel.send({ embeds: [embed] });
-    await pool.query(
+        await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
       [sentMessage.id, guildId]
-    );
+        );
     await sentMessage.pin().catch(() => {});
-    } catch (error) {
+      } catch (error) {
     console.error('Error updating wallet message:', error);
   }
 }
@@ -4471,7 +4570,7 @@ function isValidUrl(value) {
   try {
     const url = new URL(value);
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (error) {
+    } catch (error) {
     return false;
   }
 }
@@ -4742,8 +4841,8 @@ async function showWalletMenu(interaction) {
   const projects = await getWalletProjectsWithChannels(guildId);
   const totalProjects = projects.length;
   const totalChannels = projects.reduce((acc, project) => acc + project.channels.length, 0);
-    
-      const embed = new EmbedBuilder()
+
+    const embed = new EmbedBuilder()
     .setTitle('📋 Gestor de Submit Wallets')
     .setDescription('Selecciona una opción para gestionar los proyectos registrados.')
         .addFields(
@@ -4752,8 +4851,8 @@ async function showWalletMenu(interaction) {
       { name: 'Configuración', value: 'Usa `/wallet channel_set` para definir el canal donde se publica la lista.', inline: false }
     )
     .setColor('#3B82F6')
-        .setTimestamp();
-      
+      .setTimestamp();
+
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
@@ -4923,7 +5022,7 @@ async function showWalletEditSelect(interaction) {
     await interaction.reply({ content: '📋 No hay proyectos para editar.', ephemeral: true });
       return;
     }
-
+    
   const select = new StringSelectMenuBuilder()
     .setCustomId('wallet_edit_select')
     .setPlaceholder('Selecciona un proyecto para editar')
@@ -4952,9 +5051,9 @@ async function handleWalletButton(interaction) {
     
   if (customId === 'wallet_edit') {
     await showWalletEditSelect(interaction);
-    return;
-  }
-
+      return;
+    }
+    
   if (customId.startsWith('wallet_edit_project_')) {
     const projectId = customId.replace('wallet_edit_project_', '');
     const projectResult = await pool.query(
@@ -5014,9 +5113,9 @@ client.on('interactionCreate', async interaction => {
 
       if (projectResult.rows.length === 0) {
         await interaction.update({ content: '❌ No se encontró el proyecto seleccionado.', components: [] });
-        return;
-      }
-
+      return;
+    }
+    
       const channelsResult = await pool.query(
         'SELECT id, label, channel_link FROM wallet_channels WHERE project_id = $1 ORDER BY created_at',
         [projectId]
@@ -5026,9 +5125,9 @@ client.on('interactionCreate', async interaction => {
         const removed = await removeWalletProjectById(projectId, interaction.guildId);
         if (!removed) {
           await interaction.update({ content: '❌ El proyecto seleccionado ya no existe.', components: [] });
-          return;
-        }
-
+      return;
+    }
+    
         await interaction.update({
           content: `🗑️ Proyecto **${removed.project_name}** (${removed.chain.toUpperCase()}) eliminado.`,
           components: []
@@ -5068,9 +5167,9 @@ client.on('interactionCreate', async interaction => {
         const removed = await removeWalletProjectById(projectId, interaction.guildId);
         if (!removed) {
           await interaction.update({ content: '❌ El proyecto seleccionado ya no existe.', components: [] });
-          return;
-        }
-
+      return;
+    }
+    
         await interaction.update({
           content: `🗑️ Proyecto **${removed.project_name}** (${removed.chain.toUpperCase()}) eliminado.`,
           components: []
@@ -5084,9 +5183,9 @@ client.on('interactionCreate', async interaction => {
           const removal = await removeWalletChannelById(channelId, interaction.guildId);
           if (!removal) {
             await interaction.update({ content: '❌ No se encontró el canal seleccionado.', components: [] });
-            return;
-          }
-
+      return;
+    }
+    
           if (removal.projectRemoved && removal.project) {
             await interaction.update({
               content: `🗑️ Canal eliminado y el proyecto **${removal.project.project_name}** (${removal.project.chain.toUpperCase()}) quedó vacío, por lo que también se eliminó.`,
@@ -5103,7 +5202,7 @@ client.on('interactionCreate', async interaction => {
               components: []
             });
           }
-        } catch (error) {
+  } catch (error) {
           console.error('Error removing channel via select:', error);
           await interaction.update({ content: '❌ No se pudo eliminar el canal seleccionado.', components: [] });
         }
@@ -5181,8 +5280,8 @@ client.on('interactionCreate', async interaction => {
 
       if (channelResult.rows.length === 0) {
         await interaction.reply({ content: '❌ El canal seleccionado ya no existe.', ephemeral: true });
-        return;
-      }
+      return;
+    }
 
       const row = channelResult.rows[0];
       await interaction.showModal(createWalletChannelEditModal(
@@ -5256,7 +5355,7 @@ client.on('interactionCreate', async interaction => {
           content: `✏️ Cambios aplicados en **${result.projectName}** (${result.chain.toUpperCase()}): ${changesText}.`,
           ephemeral: true
         });
-      } catch (error) {
+  } catch (error) {
         console.error('Error in wallet edit modal:', error);
         let response = '❌ No se pudo actualizar el proyecto.';
 
