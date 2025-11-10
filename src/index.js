@@ -4121,15 +4121,40 @@ async function handleWalletCommand(interaction) {
 }
 
 async function handleWalletAdd(interaction) {
-  await interaction.deferReply({ ephemeral: true });
-
-  const projectName = interaction.options.getString('project').trim();
+  const projectName = interaction.options.getString('project')?.trim();
   const chainOption = interaction.options.getString('chain');
-  const link = interaction.options.getString('link').trim();
+  const link = interaction.options.getString('link')?.trim();
   const label = interaction.options.getString('label')?.trim() || null;
   const guildId = interaction.guildId;
 
   console.log('⚙️ handleWalletAdd invoked', { projectName, chainOption, link, label, guildId });
+
+  const respond = async (payload) => {
+    try {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ ...payload, ephemeral: true });
+      } else {
+        await interaction.followUp({ ...payload, ephemeral: true });
+      }
+    } catch (error) {
+      if (error.code === 40060) {
+        console.warn('wallet_add respond ignored (already acknowledged).');
+        return;
+      }
+      throw error;
+    }
+  };
+
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+    console.warn(`wallet_add: unable to defer (${error.code}), continuing with direct reply.`);
+  }
 
   try {
     const chainInfo = await resolveWalletChainOption(guildId, chainOption, { required: true });
@@ -4143,34 +4168,36 @@ async function handleWalletAdd(interaction) {
       label
     });
 
-    if (result.createdNew) {
-      await interaction.editReply({ content: `✅ Proyecto **${result.projectName}** (${chainInfo.display_name}) agregado con su primer canal.` });
-    } else {
-      await interaction.editReply({ content: `✅ Canal agregado al proyecto **${result.projectName}** (${chainInfo.display_name}).` });
-    }
+    const message = result.createdNew
+      ? `✅ Proyecto **${result.projectName}** (${chainInfo.display_name}) agregado con su primer canal.`
+      : `✅ Canal agregado al proyecto **${result.projectName}** (${chainInfo.display_name}).`;
+
+    await respond({ content: message });
   } catch (error) {
     console.error('Error in handleWalletAdd:', error);
 
+    let response = '❌ No se pudo agregar el proyecto. Intenta nuevamente.';
     switch (error.message) {
       case 'PROJECT_NAME_REQUIRED':
-        await interaction.editReply({ content: '❌ Debes proporcionar un nombre de proyecto.' });
+        response = '❌ Debes proporcionar un nombre de proyecto.';
         break;
       case 'INVALID_URL':
-        await interaction.editReply({ content: '❌ Link inválido. Debe comenzar con http:// o https://.' });
+        response = '❌ Link inválido. Debe comenzar con http:// o https://.';
         break;
       case 'CHANNEL_ALREADY_EXISTS':
-        await interaction.editReply({ content: '❌ Ese link ya está registrado para este proyecto.' });
+        response = '❌ Ese link ya está registrado para este proyecto.';
         break;
       case 'CHAIN_NOT_FOUND':
-        await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
+        response = '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.';
         break;
       case 'CHAIN_REQUIRED':
-        await interaction.editReply({ content: '❌ Debes seleccionar una red válida.' });
+        response = '❌ Debes seleccionar una red válida.';
         break;
       default:
-        await interaction.editReply({ content: '❌ No se pudo agregar el proyecto. Intenta nuevamente.' });
         break;
     }
+
+    await respond({ content: response });
   }
 }
 
