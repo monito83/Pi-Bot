@@ -221,9 +221,7 @@ async function initializeWalletSchema() {
         chain_key TEXT NOT NULL,
         display_name TEXT NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (guild_id, lower(chain_key)),
-        UNIQUE (guild_id, lower(display_name))
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
 
@@ -346,6 +344,16 @@ async function initializeWalletSchema() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_wallet_channels_project
       ON wallet_channels (project_id)
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_chains_key
+      ON wallet_chains (guild_id, lower(chain_key))
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_chains_display
+      ON wallet_chains (guild_id, lower(display_name))
     `);
 
     await pool.query(`
