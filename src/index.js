@@ -1940,10 +1940,10 @@ client.on('interactionCreate', async interaction => {
     console.error('Error handling button interaction:', error);
     try {
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ 
-          content: '❌ Error al procesar la solicitud.', 
-          flags: 64 
-        });
+    await interaction.reply({ 
+      content: '❌ Error al procesar la solicitud.', 
+      flags: 64 
+    });
       }
     } catch (replyError) {
       console.error('Error sending button error reply:', replyError);
@@ -4506,15 +4506,15 @@ async function handleWalletEdit(interaction) {
               await pool.query(
           `UPDATE wallet_channels SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${updateParams.length}`,
           updateParams
-        );
+              );
         appliedChanges.push('canal');
-      }
+            }
     }
 
     if (appliedChanges.length === 0) {
       await interaction.editReply({ content: 'ℹ️ No se detectaron cambios para aplicar.' });
-      return;
-    }
+            return;
+          }
     
     await pool.query('UPDATE wallet_projects SET updated_at = NOW() WHERE id = $1', [project.id]);
     await updateWalletMessage(guildId);
@@ -4523,7 +4523,7 @@ async function handleWalletEdit(interaction) {
     const finalChainDisplay = finalChainInfo?.display_name || project.chain;
 
     await interaction.editReply({ content: `✏️ Cambios aplicados en **${project.project_name}** (${finalChainDisplay}): ${appliedChanges.join(', ')}.` });
-            } catch (error) {
+        } catch (error) {
     console.error('Error in handleWalletEdit:', error);
     if (error.message === 'CHAIN_NOT_FOUND') {
       await interaction.editReply({ content: '❌ La red seleccionada no existe.' });
@@ -4540,11 +4540,12 @@ async function handleWalletChannelSet(interaction) {
     try {
       await interaction.deferReply({ ephemeral: true });
       deferred = true;
-    } catch (error) {
+      } catch (error) {
       if (error.code !== 40060) {
         throw error;
       }
       console.warn('wallet_channel_set: interaction already acknowledged, skipping defer.');
+      deferred = true;
     }
   }
   
@@ -4552,12 +4553,20 @@ async function handleWalletChannelSet(interaction) {
   const guildId = interaction.guildId;
     
   const respond = async (payload) => {
-    if (deferred) {
-      await interaction.editReply(payload);
-    } else if (!interaction.replied) {
-      await interaction.reply({ ...payload, ephemeral: true });
+    try {
+      if (deferred) {
+        await interaction.editReply(payload);
+      } else if (!interaction.replied) {
+        await interaction.reply({ ...payload, ephemeral: true });
     } else {
-      await interaction.followUp({ ...payload, ephemeral: true });
+        await interaction.followUp({ ...payload, ephemeral: true });
+    }
+  } catch (error) {
+      if (error.code === 40060) {
+        console.warn('wallet_channel_set respond ignored (already acknowledged).');
+        return;
+      }
+      throw error;
     }
   };
 
@@ -4568,13 +4577,13 @@ async function handleWalletChannelSet(interaction) {
       
   if (channel.guildId && channel.guildId !== guildId) {
     await respond({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
-    return;
-  }
-      
+      return;
+    }
+    
   try {
     await ensureServerConfigRow(guildId);
       
-    await pool.query(
+      await pool.query(
       `UPDATE server_config
        SET wallet_channel_id = $1,
            wallet_message_id = NULL,
@@ -4600,7 +4609,7 @@ async function handleWalletChannelClear(interaction) {
   try {
     const config = await getServerConfigRow(guildId);
 
-        await pool.query(
+    await pool.query(
       `UPDATE server_config
        SET wallet_channel_id = NULL,
            wallet_message_id = NULL,
@@ -4616,9 +4625,9 @@ async function handleWalletChannelClear(interaction) {
           const message = await channel.messages.fetch(config.wallet_message_id);
           await message.unpin().catch(() => {});
           await message.delete().catch(() => {});
-      } catch (error) {
+    } catch (error) {
           console.log('No se pudo eliminar el mensaje de wallet existente:', error.message);
-      }
+    }
     }
     }
     
@@ -4704,9 +4713,9 @@ async function handleWalletChainList(interaction) {
     
     if (chains.length === 0) {
       await interaction.editReply({ content: '📋 No hay redes configuradas. Usa `/wallet chain_add` para agregar nuevas redes.' });
-      return;
-    }
-    
+          return;
+        }
+        
     const lines = chains.map(chain => `• **${chain.display_name}** (${chain.chain_key})`);
     await interaction.editReply({ content: `🌐 Redes disponibles:\n${lines.join('\n')}` });
   } catch (error) {
@@ -4764,7 +4773,7 @@ function formatChannelOptionLabel(label, link) {
       return `${displayLabel} • ${guildIdPart}/${channelIdPart}`;
     }
     return `${displayLabel} • ${url.hostname}`;
-    } catch (error) {
+      } catch (error) {
     return `${displayLabel} • ${link.slice(-12)}`;
   }
 }
@@ -4913,7 +4922,7 @@ async function updateWalletMessage(guildId) {
           await existingMessage.pin().catch(() => {});
             }
             return;
-        } catch (error) {
+    } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
@@ -5569,9 +5578,9 @@ async function showWalletAddChainSelector(interaction) {
 
   if (!chains.length) {
     await interaction.reply({ content: '❌ No hay redes configuradas. Usa `/wallet chain_add` para crear una.', ephemeral: true });
-    return;
-  }
-
+      return;
+    }
+    
   const options = chains.slice(0, 25).map(chain =>
     new StringSelectMenuOptionBuilder()
       .setLabel(`${chain.display_name} (${chain.chain_key})`)
@@ -5783,19 +5792,19 @@ client.on('interactionCreate', async interaction => {
 
         if (projectResult.rows.length === 0) {
           await interaction.update({ content: '❌ El proyecto seleccionado ya no existe.', components: [] });
-          return;
-        }
-
-        const project = projectResult.rows[0];
+      return;
+    }
+    
+    const project = projectResult.rows[0];
         const chainInfo = await getWalletChainByKey(interaction.guildId, project.chain);
         await interaction.showModal(createWalletAddChannelModal(project, chainInfo));
         return;
       }
-
+    
       await interaction.update({ content: '❌ Selección inválida.', components: [] });
       return;
     }
-
+    
     if (interaction.customId === 'wallet_list_chain_select') {
       const value = interaction.values[0];
       if (!value || value === 'all') {
@@ -6065,8 +6074,8 @@ client.on('interactionCreate', async interaction => {
 
       if (projectResult.rows.length === 0) {
         await interaction.reply({ content: '❌ El proyecto seleccionado ya no existe.', ephemeral: true });
-        return;
-      }
+      return;
+    }
 
       const project = projectResult.rows[0];
       const chainInfo = await getWalletChainByKey(interaction.guildId, project.chain);
@@ -6091,7 +6100,7 @@ client.on('interactionCreate', async interaction => {
           : `✅ Canal agregado al proyecto **${result.projectName}** (${chainName}).`;
 
         await interaction.reply({ content: message, ephemeral: true });
-      } catch (error) {
+  } catch (error) {
         console.error('Error in wallet channel add modal:', error);
 
         let response = '❌ No se pudo agregar el canal. Intenta nuevamente.';
@@ -6118,7 +6127,7 @@ client.on('interactionCreate', async interaction => {
       try {
         const { chainKey, displayName } = await createWalletChain(interaction.guildId, name.trim(), keyInput);
         await interaction.reply({ content: `✅ Red **${displayName}** (${chainKey}) agregada correctamente.`, ephemeral: true });
-      } catch (error) {
+  } catch (error) {
         let response = '❌ No se pudo agregar la red.';
         switch (error.message) {
           case 'CHAIN_NAME_REQUIRED':
