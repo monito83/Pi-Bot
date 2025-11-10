@@ -4534,25 +4534,47 @@ async function handleWalletEdit(interaction) {
 }
 
 async function handleWalletChannelSet(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  let deferred = interaction.deferred || interaction.replied;
+
+  if (!deferred) {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      deferred = true;
+    } catch (error) {
+      if (error.code !== 40060) {
+        throw error;
+      }
+      console.warn('wallet_channel_set: interaction already acknowledged, skipping defer.');
+    }
+  }
   
   const channel = interaction.options.getChannel('channel');
   const guildId = interaction.guildId;
     
+  const respond = async (payload) => {
+    if (deferred) {
+      await interaction.editReply(payload);
+    } else if (!interaction.replied) {
+      await interaction.reply({ ...payload, ephemeral: true });
+    } else {
+      await interaction.followUp({ ...payload, ephemeral: true });
+    }
+  };
+
   if (!channel || !channel.isTextBased()) {
-    await interaction.editReply({ content: '❌ Debes seleccionar un canal de texto válido.' });
-            return;
-          }
+    await respond({ content: '❌ Debes seleccionar un canal de texto válido.' });
+    return;
+  }
       
   if (channel.guildId && channel.guildId !== guildId) {
-    await interaction.editReply({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
-        return;
-      }
+    await respond({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
+    return;
+  }
       
   try {
     await ensureServerConfigRow(guildId);
       
-              await pool.query(
+    await pool.query(
       `UPDATE server_config
        SET wallet_channel_id = $1,
            wallet_message_id = NULL,
@@ -4563,10 +4585,10 @@ async function handleWalletChannelSet(interaction) {
 
     await updateWalletMessage(guildId);
 
-    await interaction.editReply({ content: `✅ Canal configurado: <#${channel.id}>` });
-        } catch (error) {
+    await respond({ content: `✅ Canal configurado: <#${channel.id}>` });
+  } catch (error) {
     console.error('Error in handleWalletChannelSet:', error);
-    await interaction.editReply({ content: '❌ No se pudo configurar el canal.' });
+    await respond({ content: '❌ No se pudo configurar el canal.' });
   }
 }
 
