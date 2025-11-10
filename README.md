@@ -31,10 +31,13 @@
 - `/twitter test <username>` - Probar acceso a una cuenta
 
 ### 📥 Submit Wallets
-- `/wallet add project:<nombre> chain:<monad|eth|solana|base|other> link:<url> [label:<texto>]` - Registrar un proyecto y sus canales por red
-- `/wallet list [chain:<all|monad|eth|solana|base|other>]` - Ver proyectos registrados y filtrar por red
-- `/wallet edit project:<nombre> [chain:<actual>] [new_name:<texto>] [new_chain:<cadena>] [channel_label:<etiqueta>] [channel_link:<url>] [new_label:<texto>] [new_link:<url>]` - Actualizar datos de proyecto o canales individuales
-- `/wallet remove project:<nombre> [chain:<cadena>] [label:<etiqueta>] [link:<url>]` - Eliminar un proyecto completo o canales específicos
+- `/wallet add project:<nombre> chain:<red> link:<url> [label:<texto>]` - Registrar un proyecto y sus canales (la lista de redes es dinámica y autocompletada)
+- `/wallet list [chain:<all|red>]` - Ver proyectos registrados y filtrar por red específica o todas
+- `/wallet edit project:<nombre> [chain:<actual>] [new_name:<texto>] [new_chain:<red>] [channel_label:<etiqueta>] [channel_link:<url>] [new_label:<texto>] [new_link:<url>]` - Actualizar datos de proyecto o canales individuales
+- `/wallet remove project:<nombre> [chain:<red>] [label:<etiqueta>] [link:<url>]` - Eliminar un proyecto completo o canales específicos
+- `/wallet chain_add name:<nombre> [key:<identificador>]` - Agregar una nueva red disponible para los proyectos
+- `/wallet chain_remove chain:<red>` - Eliminar una red que no tenga proyectos asociados
+- `/wallet chain_list` - Listar las redes configuradas en el servidor
 - `/wallet channel_set <canal>` - Configurar canal donde se publica la lista
 - `/wallet channel_clear` - Limpiar canal configurado
 
