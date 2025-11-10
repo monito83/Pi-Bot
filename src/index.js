@@ -1938,10 +1938,16 @@ client.on('interactionCreate', async interaction => {
     }
   } catch (error) {
     console.error('Error handling button interaction:', error);
-    await interaction.reply({ 
-      content: '❌ Error al procesar la solicitud.', 
-      flags: 64 
-    });
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ 
+          content: '❌ Error al procesar la solicitud.', 
+          flags: 64 
+        });
+      }
+    } catch (replyError) {
+      console.error('Error sending button error reply:', replyError);
+    }
   }
 });
 
@@ -5564,8 +5570,17 @@ async function handleWalletButton(interaction) {
   }
 
   if (customId === 'wallet_chain_add') {
-    await interaction.showModal(createWalletChainModal());
-      return;
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.showModal(createWalletChainModal());
+      }
+    } catch (error) {
+      if (error.code !== 40060) { // Interaction already acknowledged
+        throw error;
+      }
+      console.warn('Modal already acknowledged for wallet_chain_add:', error.message);
+    }
+    return;
   }
 }
 
