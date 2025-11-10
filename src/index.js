@@ -4534,34 +4534,17 @@ async function handleWalletEdit(interaction) {
 }
 
 async function handleWalletChannelSet(interaction) {
-  let deferred = interaction.deferred || interaction.replied;
-
-  if (!deferred) {
-    try {
-      await interaction.deferReply({ ephemeral: true });
-      deferred = true;
-      } catch (error) {
-      if (error.code !== 40060) {
-        throw error;
-      }
-      console.warn('wallet_channel_set: interaction already acknowledged, skipping defer.');
-      deferred = true;
-    }
-  }
-  
   const channel = interaction.options.getChannel('channel');
   const guildId = interaction.guildId;
-    
+
   const respond = async (payload) => {
     try {
-      if (deferred) {
-        await interaction.editReply(payload);
-      } else if (!interaction.replied) {
+      if (!interaction.deferred && !interaction.replied) {
         await interaction.reply({ ...payload, ephemeral: true });
-    } else {
+      } else {
         await interaction.followUp({ ...payload, ephemeral: true });
-    }
-  } catch (error) {
+      }
+    } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_channel_set respond ignored (already acknowledged).');
         return;
@@ -4569,7 +4552,18 @@ async function handleWalletChannelSet(interaction) {
       throw error;
     }
   };
-
+  
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+    console.warn(`wallet_channel_set: unable to defer (${error.code}), continuing with direct reply.`);
+  }
+  
   if (!channel || !channel.isTextBased()) {
     await respond({ content: '❌ Debes seleccionar un canal de texto válido.' });
     return;
@@ -4602,9 +4596,34 @@ async function handleWalletChannelSet(interaction) {
 }
 
 async function handleWalletChannelClear(interaction) {
-  await interaction.deferReply({ ephemeral: true });
-
   const guildId = interaction.guildId;
+
+  const respond = async (payload) => {
+    try {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ ...payload, ephemeral: true });
+      } else {
+        await interaction.followUp({ ...payload, ephemeral: true });
+      }
+    } catch (error) {
+      if (error.code === 40060) {
+        console.warn('wallet_channel_clear respond ignored (already acknowledged).');
+        return;
+      }
+      throw error;
+    }
+  };
+
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+    console.warn(`wallet_channel_clear: unable to defer (${error.code}), continuing with direct reply.`);
+  }
 
   try {
     const config = await getServerConfigRow(guildId);
@@ -4631,10 +4650,10 @@ async function handleWalletChannelClear(interaction) {
     }
     }
     
-    await interaction.editReply({ content: '✅ Canal de wallet reseteado.' });
+    await respond({ content: '✅ Canal de wallet reseteado.' });
   } catch (error) {
     console.error('Error in handleWalletChannelClear:', error);
-    await interaction.editReply({ content: '❌ No se pudo limpiar la configuración de canal.' });
+    await respond({ content: '❌ No se pudo limpiar la configuración de canal.' });
   }
 }
 
