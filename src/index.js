@@ -4042,7 +4042,7 @@ async function getWalletProjectsByChain(guildId, chainKey) {
      FROM wallet_projects
      WHERE guild_id = $1 AND lower(chain) = lower($2)
      ORDER BY lower(project_name)
-     LIMIT 25`,
+     LIMIT 100`,
     [guildId, chainKey]
   );
 
@@ -4541,10 +4541,10 @@ async function handleWalletChannelSet(interaction) {
     try {
       if (!interaction.deferred && !interaction.replied) {
         await interaction.reply({ ...payload, ephemeral: true });
-      } else {
+    } else {
         await interaction.followUp({ ...payload, ephemeral: true });
-      }
-    } catch (error) {
+    }
+  } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_channel_set respond ignored (already acknowledged).');
         return;
@@ -4566,9 +4566,9 @@ async function handleWalletChannelSet(interaction) {
   
   if (!channel || !channel.isTextBased()) {
     await respond({ content: '❌ Debes seleccionar un canal de texto válido.' });
-    return;
-  }
-      
+      return;
+    }
+    
   if (channel.guildId && channel.guildId !== guildId) {
     await respond({ content: '❌ Solo puedes seleccionar canales del servidor actual.' });
       return;
@@ -4608,8 +4608,8 @@ async function handleWalletChannelClear(interaction) {
     } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_channel_clear respond ignored (already acknowledged).');
-        return;
-      }
+      return;
+    }
       throw error;
     }
   };
@@ -5754,6 +5754,11 @@ client.on('interactionCreate', async interaction => {
       const chainInfo = await resolveWalletChainOption(interaction.guildId, value, { required: true });
       const projects = await getWalletProjectsByChain(interaction.guildId, chainInfo.chain_key);
 
+      const MAX_OPTIONS = 25;
+      const reservedForNew = 1;
+      const availableSlots = MAX_OPTIONS - reservedForNew;
+      const limitedProjects = projects.slice(0, availableSlots);
+
       const projectSelect = new StringSelectMenuBuilder()
         .setCustomId(`wallet_add_project_select_${chainInfo.chain_key}`)
         .setPlaceholder(`Red seleccionada: ${chainInfo.display_name}`)
@@ -5764,7 +5769,7 @@ client.on('interactionCreate', async interaction => {
             .setValue(`new:${chainInfo.chain_key}`)
         );
 
-      projects.forEach(project => {
+      limitedProjects.forEach(project => {
         projectSelect.addOptions(
           new StringSelectMenuOptionBuilder()
             .setLabel(project.project_name)
@@ -5772,9 +5777,14 @@ client.on('interactionCreate', async interaction => {
         );
       });
 
+      const remainingCount = projects.length - limitedProjects.length;
+      const note = remainingCount > 0
+        ? `\n⚠️ Hay ${remainingCount} proyecto(s) más en esta red. Usa \`/wallet add\` si necesitas gestionarlos.`
+        : '';
+
       await interaction.update({
         content: projects.length
-          ? `Red seleccionada: **${chainInfo.display_name}**. ¿Quieres crear un proyecto nuevo o agregar un canal a uno existente?`
+          ? `Red seleccionada: **${chainInfo.display_name}**. ¿Quieres crear un proyecto nuevo o agregar un canal a uno existente?${note}`
           : `Red seleccionada: **${chainInfo.display_name}**. No hay proyectos registrados; crea uno nuevo.`,
         components: [new ActionRowBuilder().addComponents(projectSelect)]
       });
