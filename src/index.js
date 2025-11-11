@@ -4039,8 +4039,7 @@ async function getWalletProjectsByChain(guildId, chainKey) {
     `SELECT id, project_name
      FROM wallet_projects
      WHERE guild_id = $1 AND lower(chain) = lower($2)
-     ORDER BY lower(project_name)
-     LIMIT 100`,
+     ORDER BY lower(project_name)`,
     [guildId, chainKey]
   );
 
@@ -4134,7 +4133,7 @@ async function handleWalletAdd(interaction) {
       } else {
         await interaction.followUp({ ...payload, ephemeral: true });
       }
-    } catch (error) {
+  } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_add respond ignored (already acknowledged).');
         return;
@@ -4214,9 +4213,17 @@ async function handleWalletList(interaction) {
     }
 
     const projects = await getWalletProjectsWithChannels(interaction.guildId, chainFilterKey);
-    const embed = buildWalletEmbed(projects, { chainFilterKey, chainFilterName });
+    const embeds = buildWalletEmbeds(projects, { chainFilterKey, chainFilterName });
 
-    await interaction.editReply({ embeds: [embed] });
+    if (embeds.length <= 10) {
+      await interaction.editReply({ embeds });
+    } else {
+      await interaction.editReply({ embeds: embeds.slice(0, 10) });
+      for (let i = 10; i < embeds.length; i += 10) {
+        const chunk = embeds.slice(i, i + 10);
+        await interaction.followUp({ embeds: chunk, ephemeral: true });
+      }
+    }
   } catch (error) {
     console.error('Error in handleWalletList:', error);
     if (error.message === 'CHAIN_NOT_FOUND') {
@@ -4917,6 +4924,7 @@ async function getWalletProjectsWithChannels(guildId, chainFilter = null) {
         id: row.id,
         project_name: row.project_name,
         chain: row.chain,
+        chain_display_name: row.chain_display_name,
         submitted_by: row.submitted_by,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -4954,14 +4962,14 @@ async function updateWalletMessage(guildId) {
     }
 
     const projects = await getWalletProjectsWithChannels(guildId);
-    const embed = buildWalletEmbed(projects, {});
+    const embeds = buildWalletEmbeds(projects, {});
 
     let messageId = config.wallet_message_id;
 
     if (messageId) {
       try {
         const existingMessage = await channel.messages.fetch(messageId);
-        await existingMessage.edit({ embeds: [embed] });
+        await existingMessage.edit({ embeds });
         if (!existingMessage.pinned) {
           await existingMessage.pin().catch(() => {});
             }
@@ -4972,7 +4980,7 @@ async function updateWalletMessage(guildId) {
       }
     }
 
-    const sentMessage = await channel.send({ embeds: [embed] });
+    const sentMessage = await channel.send({ embeds });
         await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
       [sentMessage.id, guildId]
@@ -4983,25 +4991,33 @@ async function updateWalletMessage(guildId) {
   }
 }
 
-function buildWalletEmbed(projects, { chainFilterKey = null, chainFilterName = null } = {}) {
-  const embed = new EmbedBuilder()
-    .setTitle('📋 Proyectos con submit de wallets')
-    .setColor(0x3B82F6)
-    .setTimestamp(new Date());
+function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = null } = {}) {
+  const totalProjects = projects?.length || 0;
+  const filterLabel = chainFilterKey ? (chainFilterName || chainFilterKey) : null;
+  const embeds = [];
 
-  if (!projects || projects.length === 0) {
-    if (chainFilterKey) {
-      embed.setDescription(`No hay proyectos registrados para la red **${chainFilterName || chainFilterKey}**.`);
-    } else {
-      embed.setDescription('No hay proyectos registrados todavía. Usa `/wallet add` para agregar uno.');
-    }
-    return embed;
+  const createBaseEmbed = () =>
+    new EmbedBuilder()
+      .setColor(0x3B82F6)
+      .setTimestamp(new Date());
+
+  if (!totalProjects) {
+    const embed = createBaseEmbed()
+      .setTitle('📋 Proyectos con submit de wallets')
+      .setDescription(
+        filterLabel
+          ? `No hay proyectos registrados para la red **${filterLabel}**.`
+          : 'No hay proyectos registrados todavía. Usa `/wallet add` para incluir el primero.'
+      );
+
+    const footerParts = [];
+    if (filterLabel) footerParts.push(filterLabel);
+    footerParts.push('0 proyectos');
+    embed.setFooter({ text: footerParts.join(' • ') });
+    return [embed];
   }
 
-  let description = '';
-  let countIncluded = 0;
-
-  for (const [index, project] of projects.entries()) {
+  const blocks = projects.map((project, index) => {
     const chainLabel = project.chain_display_name || project.chain;
     const header = `${index + 1}. **${escapeMarkdown(project.project_name)}** (${chainLabel})`;
     const channelLines = project.channels.length > 0
@@ -5011,29 +5027,46 @@ function buildWalletEmbed(projects, { chainFilterKey = null, chainFilterName = n
         })
       : ['   • Sin canales registrados'];
 
-    const block = [header, ...channelLines].join('\n');
+    return [header, ...channelLines].join('\n');
+  });
 
-    if ((description + '\n' + block).length > 4000) {
-          break;
+  const MAX_DESCRIPTION_LENGTH = 3800;
+  let currentBlocks = [];
+  let currentLength = 0;
+
+  for (const block of blocks) {
+    const separatorLength = currentBlocks.length ? 2 : 0; // "\n\n"
+    if (currentLength + block.length + separatorLength > MAX_DESCRIPTION_LENGTH) {
+      const embed = createBaseEmbed().setDescription(currentBlocks.join('\n\n'));
+      embeds.push(embed);
+      currentBlocks = [block];
+      currentLength = block.length;
+    } else {
+      currentBlocks.push(block);
+      currentLength += block.length + separatorLength;
     }
-
-    description += (description ? '\n' : '') + block;
-    countIncluded++;
   }
 
-  embed.setDescription(description);
-
-  if (countIncluded < projects.length) {
-      embed.addFields({
-      name: 'Más proyectos',
-      value: `... y ${projects.length - countIncluded} proyectos más. Usa \\/wallet list para ver el listado completo.`
-    });
+  if (currentBlocks.length) {
+    const embed = createBaseEmbed().setDescription(currentBlocks.join('\n\n'));
+    embeds.push(embed);
   }
 
-  const footerChain = chainFilterKey ? `${(chainFilterName || chainFilterKey)} • ` : '';
-  embed.setFooter({ text: `${footerChain}${projects.length} proyecto(s) registrado(s)` });
+  const totalPages = embeds.length;
+  embeds.forEach((embed, index) => {
+    const title =
+      totalPages > 1
+        ? `📋 Proyectos con submit de wallets (${index + 1}/${totalPages})`
+        : '📋 Proyectos con submit de wallets';
+    embed.setTitle(title);
 
-  return embed;
+    const footerParts = [];
+    if (filterLabel) footerParts.push(filterLabel);
+    footerParts.push(`${totalProjects} proyecto(s)`);
+    embed.setFooter({ text: footerParts.join(' • ') });
+  });
+
+  return embeds;
 }
 
 function escapeMarkdown(text = '') {
@@ -5358,17 +5391,17 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-  const embed = new EmbedBuilder()
+      const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
-    .addFields(
+        .addFields(
       { name: '💎 NFT Tracker', value: 'Tracking de colecciones, alertas y herramientas relacionadas con NFTs.', inline: false },
       { name: '🐦 Tweet Tracker', value: 'Monitorea cuentas de X/Twitter y recibe notificaciones en Discord.', inline: false },
       { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false }
     )
     .setColor(0x5865F2)
-    .setTimestamp();
-
+        .setTimestamp();
+      
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
@@ -5399,17 +5432,17 @@ async function handleMainMenuButton(interaction) {
       await showLegacyMainMenu(interaction);
       return;
     }
-
+    
     if (customId === 'menu_main_twitter') {
       await showTwitterTrackerMenu(interaction);
       return;
     }
-
+    
     if (customId === 'menu_main_wallet') {
       await showWalletMenu(interaction);
       return;
     }
-
+    
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({ content: '❌ Opción no disponible.', ephemeral: true });
     }
@@ -5475,10 +5508,10 @@ async function showLegacyMainMenu(interaction) {
 }
 
 async function showTwitterTrackerMenu(interaction) {
-  const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
     .setTitle('🐦 Tweet Tracker')
     .setDescription('Herramientas para monitorear cuentas de X/Twitter.')
-    .addFields(
+      .addFields(
       { name: 'Agregar', value: '`/twitter add usuario canal` — registra una cuenta y el canal donde recibir alertas.', inline: false },
       { name: 'Listar', value: '`/twitter list` — muestra todas las cuentas monitoreadas.', inline: false },
       { name: 'Eliminar', value: '`/twitter remove usuario` — deja de monitorear una cuenta.', inline: false },
@@ -5486,8 +5519,8 @@ async function showTwitterTrackerMenu(interaction) {
     )
     .setColor(0x1d9bf0)
     .setFooter({ text: 'Recuerda configurar tus tokens y proveedores de Nitter.' })
-    .setTimestamp();
-
+      .setTimestamp();
+    
   const embedPayload = { embeds: [embed], ephemeral: true };
   if (interaction.deferred) {
     await interaction.editReply(embedPayload);
@@ -5716,6 +5749,75 @@ async function getWalletProjectsForSelect(guildId) {
   }));
 }
 
+function buildWalletAddProjectComponents({ chainInfo, projects, page = 0 }) {
+  const PAGE_SIZE = 24; // 1 opción reservada para "nuevo proyecto"
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const totalProjects = safeProjects.length;
+  const totalPages = Math.max(1, Math.ceil(totalProjects / PAGE_SIZE));
+  const safePage = Math.min(Math.max(Number.isFinite(page) ? page : 0, 0), totalPages - 1);
+  const start = safePage * PAGE_SIZE;
+  const currentProjects = safeProjects.slice(start, start + PAGE_SIZE);
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`wallet_add_project_select_${chainInfo.chain_key}_${safePage}`)
+    .setPlaceholder(
+      totalProjects
+        ? `Selecciona proyecto • ${chainInfo.display_name} (${safePage + 1}/${totalPages})`
+        : `Crear proyecto en ${chainInfo.display_name}`
+    )
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('➕ Crear nuevo proyecto')
+        .setDescription('Registrar un proyecto nuevo en esta red')
+        .setValue(`new:${chainInfo.chain_key}`)
+    );
+
+  currentProjects.forEach(project => {
+    select.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(project.project_name.slice(0, 100))
+        .setValue(`project:${project.id}`)
+    );
+  });
+
+  const rows = [new ActionRowBuilder().addComponents(select)];
+
+  if (totalPages > 1) {
+    const navRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`wallet_add_page_${chainInfo.chain_key}_${safePage - 1}`)
+        .setLabel('⬅️ Anterior')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage === 0),
+      new ButtonBuilder()
+        .setCustomId(`wallet_add_page_${chainInfo.chain_key}_${safePage + 1}`)
+        .setLabel('Siguiente ➡️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1)
+    );
+    rows.push(navRow);
+  }
+
+  const summaryParts = [
+    `Red: **${chainInfo.display_name}**`,
+    `${totalProjects} proyecto(s)`
+  ];
+
+  if (totalPages > 1) {
+    summaryParts.push(`Página ${safePage + 1}/${totalPages}`);
+  }
+
+  const summary = summaryParts.join(' • ');
+
+  return {
+    components: rows,
+    summary,
+    totalProjects,
+    totalPages,
+    page: safePage
+  };
+}
+
 async function showWalletRemoveSelect(interaction) {
   const options = await getWalletProjectsForSelect(interaction.guildId);
 
@@ -5826,15 +5928,30 @@ async function showWalletListChainSelector(interaction) {
 
 async function sendWalletListEmbed(interaction, { chainKey = null, chainName = null, asUpdate = false } = {}) {
   const projects = await getWalletProjectsWithChannels(interaction.guildId, chainKey);
-  const embed = buildWalletEmbed(projects, { chainFilterKey: chainKey, chainFilterName: chainName });
-  const payload = { content: null, embeds: [embed], components: [], ephemeral: true };
+  const embeds = buildWalletEmbeds(projects, { chainFilterKey: chainKey, chainFilterName: chainName });
+  if (embeds.length <= 10) {
+    if (asUpdate) {
+      await interaction.update({ content: null, embeds, components: [] });
+    } else if (interaction.deferred) {
+    await interaction.editReply({ content: null, embeds, components: [] });
+    } else {
+      await interaction.reply({ content: null, embeds, components: [], ephemeral: true });
+    }
+    return;
+  }
 
+  const firstChunk = embeds.slice(0, 10);
   if (asUpdate) {
-    await interaction.update(payload);
+    await interaction.update({ content: null, embeds: firstChunk, components: [] });
   } else if (interaction.deferred) {
-    await interaction.editReply(payload);
+    await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
   } else {
-    await interaction.reply(payload);
+    await interaction.reply({ content: null, embeds: firstChunk, components: [], ephemeral: true });
+  }
+
+  for (let i = 10; i < embeds.length; i += 10) {
+    const chunk = embeds.slice(i, i + 10);
+    await interaction.followUp({ embeds: chunk, ephemeral: true });
   }
 }
 
@@ -5845,6 +5962,40 @@ async function handleWalletButton(interaction) {
     await showWalletAddChainSelector(interaction);
       return;
     }
+
+  if (customId.startsWith('wallet_add_page_')) {
+    const match = customId.match(/^wallet_add_page_(.+)_(-?\d+)$/);
+    if (!match) {
+      await interaction.update({ content: '❌ Navegación inválida.', components: [] });
+      return;
+    }
+
+    const chainKey = match[1];
+    const targetPage = parseInt(match[2], 10);
+    const chainInfo = await getWalletChainByKey(interaction.guildId, chainKey);
+
+    if (!chainInfo) {
+      await interaction.update({ content: '❌ La red seleccionada ya no existe.', components: [] });
+      return;
+    }
+
+    const projects = await getWalletProjectsByChain(interaction.guildId, chainInfo.chain_key);
+    const { components, summary, totalProjects } = buildWalletAddProjectComponents({
+      chainInfo,
+      projects,
+      page: targetPage
+    });
+
+    const advisory = totalProjects
+      ? 'Selecciona un proyecto existente para agregarle otro canal o crea uno nuevo.'
+      : 'No hay proyectos registrados; crea uno nuevo para empezar.';
+
+    await interaction.update({
+      content: `${summary}\n${advisory}`,
+      components
+    });
+    return;
+  }
     
   if (customId === 'wallet_edit') {
     await showWalletEditSelect(interaction);
@@ -5888,7 +6039,7 @@ async function handleWalletButton(interaction) {
       if (!interaction.replied && !interaction.deferred) {
         await interaction.showModal(createWalletChainModal());
       }
-    } catch (error) {
+  } catch (error) {
       if (error.code !== 40060) { // Interaction already acknowledged
         throw error;
       }
@@ -5919,52 +6070,33 @@ client.on('interactionCreate', async interaction => {
       const value = interaction.values[0];
       const chainInfo = await resolveWalletChainOption(interaction.guildId, value, { required: true });
       const projects = await getWalletProjectsByChain(interaction.guildId, chainInfo.chain_key);
-
-      const MAX_OPTIONS = 25;
-      const reservedForNew = 1;
-      const availableSlots = MAX_OPTIONS - reservedForNew;
-      const limitedProjects = projects.slice(0, availableSlots);
-
-      const projectSelect = new StringSelectMenuBuilder()
-        .setCustomId(`wallet_add_project_select_${chainInfo.chain_key}`)
-        .setPlaceholder(`Red seleccionada: ${chainInfo.display_name}`)
-        .addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel('➕ Crear nuevo proyecto')
-            .setDescription('Registrar un proyecto nuevo en esta red')
-            .setValue(`new:${chainInfo.chain_key}`)
-        );
-
-      limitedProjects.forEach(project => {
-        projectSelect.addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(project.project_name)
-            .setValue(`project:${project.id}`)
-        );
+      const { components, summary, totalProjects } = buildWalletAddProjectComponents({
+        chainInfo,
+        projects,
+        page: 0
       });
 
-      const remainingCount = projects.length - limitedProjects.length;
-      const note = remainingCount > 0
-        ? `\n⚠️ Hay ${remainingCount} proyecto(s) más en esta red. Usa \`/wallet add\` si necesitas gestionarlos.`
-        : '';
+      const advisory = totalProjects
+        ? 'Selecciona un proyecto existente para agregarle otro canal o crea uno nuevo.'
+        : 'No hay proyectos registrados; crea uno nuevo para empezar.';
 
       await interaction.update({
-        content: projects.length
-          ? `Red seleccionada: **${chainInfo.display_name}**. ¿Quieres crear un proyecto nuevo o agregar un canal a uno existente?${note}`
-          : `Red seleccionada: **${chainInfo.display_name}**. No hay proyectos registrados; crea uno nuevo.`,
-        components: [new ActionRowBuilder().addComponents(projectSelect)]
+        content: `${summary}\n${advisory}`,
+        components
       });
       return;
     }
-
+    
     if (interaction.customId.startsWith('wallet_add_project_select_')) {
-      const chainKey = interaction.customId.replace('wallet_add_project_select_', '');
+      const match = interaction.customId.match(/^wallet_add_project_select_(.+)_(\d+)$/);
       const value = interaction.values[0];
 
-      if (!value) {
+      if (!match || !value) {
         await interaction.update({ content: '❌ Selección inválida.', components: [] });
         return;
       }
+
+      const chainKey = match[1];
 
       if (value.startsWith('new:')) {
         const chainInfo = await getWalletChainByKey(interaction.guildId, chainKey);
@@ -5987,15 +6119,15 @@ client.on('interactionCreate', async interaction => {
 
         if (projectResult.rows.length === 0) {
           await interaction.update({ content: '❌ El proyecto seleccionado ya no existe.', components: [] });
-      return;
-    }
-    
-    const project = projectResult.rows[0];
+          return;
+        }
+
+        const project = projectResult.rows[0];
         const chainInfo = await getWalletChainByKey(interaction.guildId, project.chain);
         await interaction.showModal(createWalletAddChannelModal(project, chainInfo));
         return;
       }
-    
+
       await interaction.update({ content: '❌ Selección inválida.', components: [] });
       return;
     }
@@ -6039,7 +6171,7 @@ client.on('interactionCreate', async interaction => {
           await interaction.update({ content: '❌ El proyecto seleccionado ya no existe.', components: [] });
       return;
     }
-    
+
         await interaction.update({
           content: `🗑️ Proyecto **${removed.project_name}** (${removed.chain.toUpperCase()}) eliminado.`,
           components: []
