@@ -5683,18 +5683,28 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-      const embed = new EmbedBuilder()
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ flags: 64 });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+  }
+
+  const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
-        .addFields(
+    .addFields(
       { name: '💎 NFT Tracker', value: 'Tracking de colecciones, alertas y herramientas relacionadas con NFTs.', inline: false },
       { name: '🐦 Tweet Tracker', value: 'Monitorea cuentas de X/Twitter y recibe notificaciones en Discord.', inline: false },
       { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false },
       { name: '🗓️ Calendario Monad', value: 'Consulta los eventos programados de la DAO y obtén recordatorios rápidos.', inline: false }
     )
     .setColor(0x5865F2)
-        .setTimestamp();
-      
+    .setTimestamp();
+
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
@@ -5719,7 +5729,15 @@ async function handleMainMenuCommand(interaction) {
         .setStyle(ButtonStyle.Success)
     );
 
-  await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+  const payload = { embeds: [embed], components: [row] };
+
+  if (interaction.deferred) {
+    await interaction.editReply(payload);
+  } else if (interaction.replied) {
+    await interaction.followUp({ ...payload, flags: 64 });
+  } else {
+    await interaction.reply({ ...payload, flags: 64 });
+  }
 }
 
 async function handleMainMenuButton(interaction) {
