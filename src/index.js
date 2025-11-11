@@ -4357,8 +4357,8 @@ async function handleCalendarButton(interaction) {
 
   if (customId === 'calendar_show_menu') {
     await showCalendarMenu(interaction);
-    return;
-  }
+      return;
+    }
 
   if (customId.startsWith('calendar_show_')) {
     const rangeKey = customId.replace('calendar_show_', '');
@@ -4415,8 +4415,8 @@ async function handleCalendarChannelSet(interaction) {
 
   if (!channel || !channel.isTextBased()) {
     await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', ephemeral: true });
-    return;
-  }
+      return;
+    }
 
   if (channel.guildId && channel.guildId !== guildId) {
     await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', ephemeral: true });
@@ -4607,6 +4607,27 @@ function formatCalendarEventTime(event) {
   return '🕒 Horario no especificado';
 }
 
+function normalizeCalendarText(text) {
+  if (!text) return '';
+  let result = text;
+
+  result = result.replace(/<br\s*\/?>/gi, '\n');
+  result = result.replace(/<\/p>/gi, '\n\n');
+  result = result.replace(/<\/?[^>]+(>|$)/g, '');
+
+  const entities = {
+    '&nbsp;': ' ',
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'"
+  };
+  result = result.replace(/&[a-zA-Z0-9#]+;/g, match => entities[match] || match);
+
+  return result.trim();
+}
+
 function truncateString(text, maxLength = 200) {
   if (!text) return '';
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
@@ -4621,17 +4642,17 @@ function buildCalendarReminderEmbed(event) {
     .setTimestamp(new Date());
 
   if (event.location) {
-    embed.addFields({
+      embed.addFields({
       name: 'Ubicación',
       value: escapeMarkdown(truncateString(event.location, 200)),
-      inline: false
-    });
-  }
+        inline: false
+      });
+    }
 
   if (event.description) {
     embed.addFields({
       name: 'Descripción',
-      value: escapeMarkdown(truncateString(event.description, 500)),
+      value: escapeMarkdown(truncateString(normalizeCalendarText(event.description), 500)),
       inline: false
     });
   }
@@ -4654,7 +4675,7 @@ async function showCalendarMenu(interaction) {
     try {
       await interaction.deferReply({ ephemeral: true });
       alreadyAcknowledged = true;
-    } catch (error) {
+  } catch (error) {
       if (error.code === 40060 || error.code === 10062) {
         alreadyAcknowledged = true;
       } else {
@@ -6043,7 +6064,7 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-  const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
     .addFields(
@@ -6053,7 +6074,7 @@ async function handleMainMenuCommand(interaction) {
       { name: '🗓️ Calendario Monad', value: 'Consulta los eventos programados de la DAO y obtén recordatorios rápidos.', inline: false }
     )
     .setColor(0x5865F2)
-    .setTimestamp();
+      .setTimestamp();
 
   const row = new ActionRowBuilder()
     .addComponents(
@@ -6155,7 +6176,7 @@ async function handleMainMenuButton(interaction) {
       }
       return;
     }
-    
+
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({ content: '❌ Opción no disponible.', ephemeral: true });
     }
