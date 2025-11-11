@@ -670,6 +670,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('calendario')
     .setDescription('Consultar eventos del calendario Monad')
+  .addSubcommand(subcommand =>
+    subcommand
+      .setName('menu')
+      .setDescription('Abrir el panel interactivo del calendario'))
     .addSubcommand(subcommand =>
       subcommand
         .setName('hoy')
@@ -4124,10 +4128,15 @@ async function handleCalendarCommand(interaction) {
     // Ignorar si no hay subcomando (no debería ocurrir)
   }
 
+  if (subcommand === 'menu') {
+    await showCalendarMenu(interaction);
+    return;
+  }
+
   const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
 
   try {
-    await interaction.deferReply({ flags: 64 });
+    await interaction.deferReply({ ephemeral: true });
   } catch (error) {
     if (error.code !== 40060 && error.code !== 10062) {
       throw error;
@@ -4148,7 +4157,7 @@ async function handleCalendarButton(interaction) {
   if (customId.startsWith('calendar_show_')) {
     const rangeKey = customId.replace('calendar_show_', '');
     try {
-      await interaction.deferReply({ flags: 64 });
+      await interaction.deferReply({ ephemeral: true });
     } catch (error) {
       if (error.code !== 40060 && error.code !== 10062) {
         throw error;
@@ -4176,9 +4185,9 @@ async function respondCalendarRange(interaction, rangeKey) {
     if (interaction.deferred) {
       await interaction.editReply({ content: null, embeds: [embed], components: [] });
     } else if (interaction.replied) {
-      await interaction.followUp({ embeds: [embed], flags: 64 });
+      await interaction.followUp({ embeds: [embed], ephemeral: true });
     } else {
-      await interaction.reply({ embeds: [embed], flags: 64 });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
     }
   } catch (error) {
     console.error('Error obteniendo eventos del calendario:', error);
@@ -4187,9 +4196,9 @@ async function respondCalendarRange(interaction, rangeKey) {
     if (interaction.deferred) {
       await interaction.editReply({ content: message, embeds: [], components: [] });
     } else if (interaction.replied) {
-      await interaction.followUp({ content: message, flags: 64 });
+      await interaction.followUp({ content: message, ephemeral: true });
     } else {
-      await interaction.reply({ content: message, flags: 64 });
+      await interaction.reply({ content: message, ephemeral: true });
     }
   }
 }
@@ -4298,11 +4307,16 @@ function truncateString(text, maxLength = 200) {
 }
 
 async function showCalendarMenu(interaction) {
-  if (!interaction.deferred && !interaction.replied) {
+  let alreadyAcknowledged = interaction.deferred || interaction.replied;
+
+  if (!alreadyAcknowledged) {
     try {
-      await interaction.deferReply({ flags: 64 });
+      await interaction.deferReply({ ephemeral: true });
+      alreadyAcknowledged = true;
     } catch (error) {
-      if (error.code !== 40060 && error.code !== 10062) {
+      if (error.code === 40060 || error.code === 10062) {
+        alreadyAcknowledged = true;
+      } else {
         throw error;
       }
     }
@@ -4363,10 +4377,10 @@ async function showCalendarMenu(interaction) {
 
   if (interaction.deferred) {
     await interaction.editReply(payload);
-  } else if (interaction.replied) {
-    await interaction.followUp({ ...payload, flags: 64 });
+  } else if (interaction.replied || alreadyAcknowledged) {
+    await interaction.followUp({ ...payload, ephemeral: true });
   } else {
-    await interaction.reply({ ...payload, flags: 64 });
+    await interaction.reply({ ...payload, ephemeral: true });
   }
 }
 
@@ -5683,11 +5697,18 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-  try {
-    await interaction.deferReply({ ephemeral: true });
-  } catch (error) {
-    if (error.code !== 40060 && error.code !== 10062) {
-      throw error;
+  let alreadyAcknowledged = interaction.deferred || interaction.replied;
+
+  if (!alreadyAcknowledged) {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      alreadyAcknowledged = true;
+    } catch (error) {
+      if (error.code === 40060 || error.code === 10062) {
+        alreadyAcknowledged = true;
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -5729,11 +5750,17 @@ async function handleMainMenuCommand(interaction) {
 
   const payload = { embeds: [embed], components: [row] };
 
-  if (interaction.deferred || interaction.replied) {
+  if (interaction.deferred) {
     await interaction.editReply(payload);
-  } else {
-    await interaction.reply({ ...payload, ephemeral: true });
+    return;
   }
+
+  if (interaction.replied || alreadyAcknowledged) {
+    await interaction.followUp({ ...payload, ephemeral: true });
+    return;
+  }
+
+  await interaction.reply({ ...payload, ephemeral: true });
 }
 
 async function handleMainMenuButton(interaction) {
