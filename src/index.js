@@ -13,7 +13,7 @@ console.log('🔥 LOG 6: Express loaded');
 require('dotenv').config();
 console.log('🔥 LOG 7: Dotenv loaded');
 const TwitterRSSService = require('./services/twitterRSS');
-const { getCalendarEvents } = require('./services/googleCalendar');
+const { getCalendarEvents, getCalendarEventsBetween } = require('./services/googleCalendar');
 console.log('🔥 LOG 8: Twitter RSS Service loaded');
 
 // 🚀 DEPLOYMENT VERIFICATION LOG
@@ -96,6 +96,10 @@ const CALENDAR_RANGES = {
 };
 const CALENDAR_DISPLAY_LOCALE = process.env.GOOGLE_CALENDAR_LOCALE || 'es-ES';
 const CALENDAR_DISPLAY_TIMEZONE = process.env.GOOGLE_CALENDAR_DISPLAY_TZ || 'UTC';
+const CALENDAR_CRON_TIMEZONE = process.env.GOOGLE_CALENDAR_CRON_TZ || 'UTC';
+const CALENDAR_DAILY_CRON = process.env.GOOGLE_CALENDAR_DAILY_CRON || '0 9 * * *';
+const CALENDAR_REMINDER_CRON = process.env.GOOGLE_CALENDAR_REMINDER_CRON || '*/5 * * * *';
+const CALENDAR_REMINDER_LOOKAHEAD_MINUTES = parseInt(process.env.GOOGLE_CALENDAR_REMINDER_MINUTES || '60', 10);
 
 // Crear tabla de configuración del servidor si no existe
 async function initializeServerConfig() {
@@ -393,9 +397,39 @@ async function initializeWalletSchema() {
   }
 }
 
+async function initializeCalendarSchema() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS calendar_notifications (
+        id SERIAL PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        notification_type TEXT NOT NULL,
+        sent_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(guild_id, event_id, notification_type)
+      )
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_config
+      ADD COLUMN IF NOT EXISTS calendar_channel_id TEXT
+    `);
+
+    await pool.query(`
+      ALTER TABLE server_config
+      ADD COLUMN IF NOT EXISTS calendar_last_daily DATE
+    `);
+
+    console.log('✅ Calendar schema initialized');
+  } catch (error) {
+    console.error('Error initializing calendar schema:', error);
+  }
+}
+
 // Inicializar tablas de Twitter
 initializeTwitterTables();
 initializeWalletSchema();
+initializeCalendarSchema();
 
 // Forzar creación de tabla alert_history después de un delay
 setTimeout(async () => {
@@ -670,10 +704,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('calendario')
     .setDescription('Consultar eventos del calendario Monad')
-  .addSubcommand(subcommand =>
-    subcommand
-      .setName('menu')
-      .setDescription('Abrir el panel interactivo del calendario'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('menu')
+        .setDescription('Abrir el panel interactivo del calendario'))
     .addSubcommand(subcommand =>
       subcommand
         .setName('hoy')
@@ -689,7 +723,21 @@ const commands = [
     .addSubcommand(subcommand =>
       subcommand
         .setName('mes')
-        .setDescription('Mostrar eventos del próximo mes')),
+        .setDescription('Mostrar eventos del próximo mes'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_set')
+        .setDescription('Configurar el canal para notificaciones del calendario')
+        .addChannelOption(option =>
+          option
+            .setName('channel')
+            .setDescription('Canal donde se enviarán los avisos del calendario')
+            .setRequired(true)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('channel_clear')
+        .setDescription('Eliminar el canal configurado para el calendario')),
 
   new SlashCommandBuilder()
     .setName('wallet')
@@ -870,6 +918,7 @@ client.once('ready', () => {
   
   // Programar tarea de tracking cada 5 minutos
   scheduleTracking();
+  scheduleCalendarJobs();
 });
 
 // Programar tracking automático
@@ -883,6 +932,154 @@ function scheduleTracking() {
   // });
 
   console.log('⏰ Tracking automático programado cada 1 minuto (DEBUG MODE) - DISABLED');
+}
+
+let calendarJobsScheduled = false;
+
+function scheduleCalendarJobs() {
+  if (calendarJobsScheduled) {
+    return;
+  }
+  calendarJobsScheduled = true;
+
+  cron.schedule(
+    CALENDAR_DAILY_CRON,
+    async () => {
+      for (const guild of client.guilds.cache.values()) {
+        try {
+          await sendCalendarDailySummary(guild.id);
+        } catch (error) {
+          console.error(`Error enviando resumen diario para guild ${guild.id}:`, error);
+        }
+      }
+    },
+    { timezone: CALENDAR_CRON_TIMEZONE }
+  );
+
+  cron.schedule(
+    CALENDAR_REMINDER_CRON,
+    async () => {
+      try {
+        await processCalendarReminderWindow();
+      } catch (error) {
+        console.error('Error procesando recordatorios de calendario:', error);
+      }
+    },
+    { timezone: CALENDAR_CRON_TIMEZONE }
+  );
+}
+
+async function sendCalendarDailySummary(guildId) {
+  try {
+    await ensureServerConfigRow(guildId);
+    const config = await getServerConfigRow(guildId);
+
+    if (!config?.calendar_channel_id) {
+      return;
+    }
+
+    const todayUTC = new Date().toISOString().slice(0, 10);
+    if (config.calendar_last_daily && config.calendar_last_daily === todayUTC) {
+      return;
+    }
+
+    const channel = await client.channels.fetch(config.calendar_channel_id).catch(() => null);
+    if (!channel || !channel.isTextBased()) {
+      console.warn(`Canal de calendario no accesible para guild ${guildId}`);
+      return;
+    }
+
+    const events = await getCalendarEvents('today');
+    const embed = buildCalendarEmbed('hoy', events);
+
+    await channel.send({ content: '📅 **Resumen de eventos para hoy**', embeds: [embed] });
+
+    await pool.query(
+      `UPDATE server_config
+       SET calendar_last_daily = $1,
+           updated_at = NOW()
+       WHERE guild_id = $2`,
+      [todayUTC, guildId]
+    );
+  } catch (error) {
+    console.error(`Error preparando resumen diario para guild ${guildId}:`, error);
+  }
+}
+
+async function processCalendarReminderWindow() {
+  const now = new Date();
+  const windowEnd = new Date(now.getTime() + CALENDAR_REMINDER_LOOKAHEAD_MINUTES * 60 * 1000);
+  const timeMin = now.toISOString();
+  const timeMax = windowEnd.toISOString();
+
+  let events = [];
+  try {
+    events = await getCalendarEventsBetween(timeMin, timeMax);
+  } catch (error) {
+    console.error('Error obteniendo eventos para recordatorios:', error);
+    return;
+  }
+
+  if (!events.length) {
+    return;
+  }
+
+  for (const guild of client.guilds.cache.values()) {
+    const guildId = guild.id;
+    try {
+      await ensureServerConfigRow(guildId);
+      const config = await getServerConfigRow(guildId);
+      if (!config?.calendar_channel_id) {
+        continue;
+      }
+
+      const channel = await client.channels.fetch(config.calendar_channel_id).catch(() => null);
+      if (!channel || !channel.isTextBased()) {
+        continue;
+      }
+
+      for (const event of events) {
+        const startISO = event.start?.dateTime;
+        if (!startISO) {
+          continue;
+        }
+
+        const startDate = new Date(startISO);
+        const diffMs = startDate.getTime() - now.getTime();
+
+        if (diffMs < 0 || diffMs > CALENDAR_REMINDER_LOOKAHEAD_MINUTES * 60 * 1000) {
+          continue;
+        }
+
+        const inserted = await recordCalendarNotification(guildId, event.id, 'hour_before');
+        if (!inserted) {
+          continue;
+        }
+
+        const embed = buildCalendarReminderEmbed(event);
+        await channel.send({ content: '⏰ **Recordatorio de evento en 1 hora**', embeds: [embed] });
+      }
+    } catch (error) {
+      console.error(`Error enviando recordatorios para guild ${guildId}:`, error);
+    }
+  }
+}
+
+async function recordCalendarNotification(guildId, eventId, notificationType) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO calendar_notifications (guild_id, event_id, notification_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (guild_id, event_id, notification_type) DO NOTHING
+       RETURNING id`,
+      [guildId, eventId, notificationType]
+    );
+
+    return result.rowCount > 0;
+  } catch (error) {
+    console.error('Error registrando notificación de calendario:', error);
+    return false;
+  }
 }
 
 // Realizar tracking de todos los proyectos
@@ -4128,9 +4325,18 @@ async function handleCalendarCommand(interaction) {
     // Ignorar si no hay subcomando (no debería ocurrir)
   }
 
-  if (subcommand === 'menu') {
-    await showCalendarMenu(interaction);
-    return;
+  switch (subcommand) {
+    case 'menu':
+      await showCalendarMenu(interaction);
+      return;
+    case 'channel_set':
+      await handleCalendarChannelSet(interaction);
+      return;
+    case 'channel_clear':
+      await handleCalendarChannelClear(interaction);
+      return;
+    default:
+      break;
   }
 
   const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
@@ -4199,6 +4405,106 @@ async function respondCalendarRange(interaction, rangeKey) {
       await interaction.followUp({ content: message, ephemeral: true });
     } else {
       await interaction.reply({ content: message, ephemeral: true });
+    }
+  }
+}
+
+async function handleCalendarChannelSet(interaction) {
+  const channel = interaction.options.getChannel('channel');
+  const guildId = interaction.guildId;
+
+  if (!channel || !channel.isTextBased()) {
+    await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', ephemeral: true });
+    return;
+  }
+
+  if (channel.guildId && channel.guildId !== guildId) {
+    await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', ephemeral: true });
+    return;
+  }
+
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+  }
+
+  try {
+    await ensureServerConfigRow(guildId);
+    await pool.query(
+      `UPDATE server_config
+       SET calendar_channel_id = $1,
+           updated_at = NOW()
+       WHERE guild_id = $2`,
+      [channel.id, guildId]
+    );
+
+    const message = { content: `✅ Canal de calendario configurado en <#${channel.id}>.` };
+    if (interaction.deferred) {
+      await interaction.editReply(message);
+    } else if (interaction.replied) {
+      await interaction.followUp({ ...message, ephemeral: true });
+    } else {
+      await interaction.reply({ ...message, ephemeral: true });
+    }
+  } catch (error) {
+    console.error('Error configurando canal de calendario:', error);
+    const message = { content: '❌ No se pudo configurar el canal del calendario.' };
+    if (interaction.deferred) {
+      await interaction.editReply(message);
+    } else if (interaction.replied) {
+      await interaction.followUp({ ...message, ephemeral: true });
+    } else {
+      await interaction.reply({ ...message, ephemeral: true });
+    }
+  }
+}
+
+async function handleCalendarChannelClear(interaction) {
+  const guildId = interaction.guildId;
+
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+  }
+
+  try {
+    await ensureServerConfigRow(guildId);
+    await pool.query(
+      `UPDATE server_config
+       SET calendar_channel_id = NULL,
+           calendar_last_daily = NULL,
+           updated_at = NOW()
+       WHERE guild_id = $1`,
+      [guildId]
+    );
+
+    const message = { content: '✅ Canal de calendario eliminado.' };
+    if (interaction.deferred) {
+      await interaction.editReply(message);
+    } else if (interaction.replied) {
+      await interaction.followUp({ ...message, ephemeral: true });
+    } else {
+      await interaction.reply({ ...message, ephemeral: true });
+    }
+  } catch (error) {
+    console.error('Error limpiando canal de calendario:', error);
+    const message = { content: '❌ No se pudo limpiar el canal del calendario.' };
+    if (interaction.deferred) {
+      await interaction.editReply(message);
+    } else if (interaction.replied) {
+      await interaction.followUp({ ...message, ephemeral: true });
+    } else {
+      await interaction.reply({ ...message, ephemeral: true });
     }
   }
 }
@@ -4306,6 +4612,41 @@ function truncateString(text, maxLength = 200) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
+function buildCalendarReminderEmbed(event) {
+  const title = escapeMarkdown(event.summary || 'Evento');
+  const embed = new EmbedBuilder()
+    .setTitle(`⏰ Recordatorio: ${title}`)
+    .setDescription(formatCalendarEventTime(event))
+    .setColor(0xF97316)
+    .setTimestamp(new Date());
+
+  if (event.location) {
+    embed.addFields({
+      name: 'Ubicación',
+      value: escapeMarkdown(truncateString(event.location, 200)),
+      inline: false
+    });
+  }
+
+  if (event.description) {
+    embed.addFields({
+      name: 'Descripción',
+      value: escapeMarkdown(truncateString(event.description, 500)),
+      inline: false
+    });
+  }
+
+  if (event.htmlLink) {
+    embed.addFields({
+      name: 'Enlace',
+      value: `[Abrir en Google Calendar](${event.htmlLink})`,
+      inline: false
+    });
+  }
+
+  return embed;
+}
+
 async function showCalendarMenu(interaction) {
   let alreadyAcknowledged = interaction.deferred || interaction.replied;
 
@@ -4346,6 +4687,11 @@ async function showCalendarMenu(interaction) {
       {
         name: 'Comandos rápidos',
         value: '`/calendario hoy` • `/calendario tresdias` • `/calendario semana` • `/calendario mes`',
+        inline: false
+      },
+      {
+        name: 'Notificaciones automáticas',
+        value: '• Resumen diario a las 09:00 UTC\n• Recordatorios 1 hora antes de cada evento',
         inline: false
       }
     )

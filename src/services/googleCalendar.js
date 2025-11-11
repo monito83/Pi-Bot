@@ -133,7 +133,35 @@ async function getCalendarEvents(range = 'today') {
   return items.filter(event => event.status !== 'cancelled');
 }
 
+async function getCalendarEventsBetween(timeMinISO, timeMaxISO) {
+  if (!CALENDAR_ID) {
+    throw new Error('Falta configurar GOOGLE_CALENDAR_ID en el entorno.');
+  }
+
+  if (!timeMinISO || !timeMaxISO) {
+    throw new Error('Se requieren timeMin y timeMax para obtener eventos entre fechas.');
+  }
+
+  const auth = getAuthClient();
+  await auth.authorize();
+
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  const response = await calendar.events.list({
+    calendarId: CALENDAR_ID,
+    timeMin: timeMinISO,
+    timeMax: timeMaxISO,
+    singleEvents: true,
+    orderBy: 'startTime',
+    maxResults: MAX_RESULTS
+  });
+
+  const items = response.data?.items || [];
+  return items.filter(event => event.status !== 'cancelled');
+}
+
 module.exports = {
-  getCalendarEvents
+  getCalendarEvents,
+  getCalendarEventsBetween
 };
 
