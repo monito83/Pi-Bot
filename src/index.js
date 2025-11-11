@@ -5745,7 +5745,11 @@ async function handleMainMenuCommand(interaction) {
         .setCustomId('menu_main_wallet')
         .setLabel('Submit Wallets')
         .setEmoji('📝')
-        .setStyle(ButtonStyle.Success)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('menu_main_test')
+        .setLabel('Prueba')
+        .setStyle(ButtonStyle.Secondary)
     );
 
   const payload = { embeds: [embed], components: [row] };
@@ -5784,6 +5788,15 @@ async function handleMainMenuButton(interaction) {
     
     if (customId === 'menu_main_wallet') {
       await showWalletMenu(interaction);
+      return;
+    }
+
+    if (customId === 'menu_main_test') {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '✅ Botón de prueba recibido.', ephemeral: true });
+      } else {
+        await interaction.followUp({ content: '✅ Botón de prueba recibido.', ephemeral: true });
+      }
       return;
     }
     
