@@ -617,7 +617,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('menu')
-    .setDescription('Mostrar menú principal con botones interactivos'),
+    .setDescription('Abrir el panel principal del bot'),
 
   // Comandos de Twitter
   new SlashCommandBuilder()
@@ -1739,7 +1739,7 @@ client.on('interactionCreate', async (interaction) => {
         await handleDeleteCommand(interaction);
         break;
       case 'menu':
-        await handleMenuCommand(interaction);
+        await handleMainMenuCommand(interaction);
         break;
       case 'twitter':
         await handleTwitterCommand(interaction);
@@ -1911,12 +1911,10 @@ client.on('interactionCreate', async interaction => {
         content: `✅ Alertas deshabilitadas para **${projectName}**`, 
         flags: 64 
       });
+    } else if (interaction.customId.startsWith('menu_main_')) {
+      await handleMainMenuButton(interaction);
     } else if (interaction.customId.startsWith('menu_')) {
-      // Manejar botones del menú principal
-      await handleMenuButton(interaction);
-    } else if (interaction.customId === 'back_to_menu') {
-      // Volver al menú principal
-      await handleMenuCommand(interaction);
+      await handleLegacyMenuButton(interaction);
     } else if (interaction.customId.startsWith('projects_')) {
       // Manejar botones de proyectos
       await handleProjectsButton(interaction);
@@ -2979,8 +2977,8 @@ async function validateProject(contractAddress) {
   }
 }
 
-// Manejar botones del menú
-async function handleMenuButton(interaction) {
+// Manejar botones del menú legado (NFT Tracker detallado)
+async function handleLegacyMenuButton(interaction) {
   const buttonId = interaction.customId;
   
   try {
@@ -3009,7 +3007,7 @@ async function handleMenuButton(interaction) {
         await interaction.editReply({ content: '❌ Opción no reconocida.' });
     }
   } catch (error) {
-    console.error('Error in handleMenuButton:', error);
+    console.error('Error in handleLegacyMenuButton:', error);
     await interaction.editReply({ content: '❌ Error interno.' });
   }
 }
@@ -5357,6 +5355,147 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
     chainDisplay: finalChain?.display_name || updatedChain,
     changes
   };
+}
+
+async function handleMainMenuCommand(interaction) {
+  const embed = new EmbedBuilder()
+    .setTitle('🤖 Panel Principal de Pi-Bot')
+    .setDescription('Selecciona el módulo que quieres gestionar:')
+    .addFields(
+      { name: '💎 NFT Tracker', value: 'Tracking de colecciones, alertas y herramientas relacionadas con NFTs.', inline: false },
+      { name: '🐦 Tweet Tracker', value: 'Monitorea cuentas de X/Twitter y recibe notificaciones en Discord.', inline: false },
+      { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false }
+    )
+    .setColor(0x5865F2)
+    .setTimestamp();
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('menu_main_nft')
+        .setLabel('NFT Tracker')
+        .setEmoji('💎')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('menu_main_twitter')
+        .setLabel('Tweet Tracker')
+        .setEmoji('🐦')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('menu_main_wallet')
+        .setLabel('Submit Wallets')
+        .setEmoji('📝')
+        .setStyle(ButtonStyle.Success)
+    );
+
+  await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+}
+
+async function handleMainMenuButton(interaction) {
+  const { customId } = interaction;
+
+  try {
+    if (customId === 'menu_main_nft') {
+      await showLegacyMainMenu(interaction);
+      return;
+    }
+
+    if (customId === 'menu_main_twitter') {
+      await showTwitterTrackerMenu(interaction);
+      return;
+    }
+
+    if (customId === 'menu_main_wallet') {
+      await showWalletMenu(interaction);
+      return;
+    }
+
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: '❌ Opción no disponible.', ephemeral: true });
+    }
+  } catch (error) {
+    console.error('Error handling main menu button:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: '❌ Error al procesar la opción del menú principal.', ephemeral: true });
+      } catch (replyError) {
+        console.error('Error replying to main menu button failure:', replyError);
+      }
+    }
+  }
+}
+
+async function showLegacyMainMenu(interaction) {
+  const embed = new EmbedBuilder()
+    .setTitle('💎 NFT Tracker')
+    .setDescription('Selecciona una sección para administrar el seguimiento de NFTs.')
+    .setColor(0x22c55e)
+    .setTimestamp();
+
+  const row1 = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('menu_projects')
+        .setLabel('📋 Proyectos')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('menu_alerts')
+        .setLabel('🔔 Alertas')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('menu_stats')
+        .setLabel('📈 Estadísticas')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+  const row2 = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('menu_config')
+        .setLabel('⚙️ Configuración')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('menu_tools')
+        .setLabel('🧰 Herramientas')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('menu_help')
+        .setLabel('❓ Ayuda')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+  const payload = { embeds: [embed], components: [row1, row2], ephemeral: true };
+  if (interaction.deferred) {
+    await interaction.editReply(payload);
+  } else if (interaction.replied) {
+    await interaction.followUp(payload);
+  } else {
+    await interaction.reply(payload);
+  }
+}
+
+async function showTwitterTrackerMenu(interaction) {
+  const embed = new EmbedBuilder()
+    .setTitle('🐦 Tweet Tracker')
+    .setDescription('Herramientas para monitorear cuentas de X/Twitter.')
+    .addFields(
+      { name: 'Agregar', value: '`/twitter add usuario canal` — registra una cuenta y el canal donde recibir alertas.', inline: false },
+      { name: 'Listar', value: '`/twitter list` — muestra todas las cuentas monitoreadas.', inline: false },
+      { name: 'Eliminar', value: '`/twitter remove usuario` — deja de monitorear una cuenta.', inline: false },
+      { name: 'Probar', value: '`/twitter test usuario` — obtiene el último tweet manualmente.', inline: false }
+    )
+    .setColor(0x1d9bf0)
+    .setFooter({ text: 'Recuerda configurar tus tokens y proveedores de Nitter.' })
+    .setTimestamp();
+
+  const embedPayload = { embeds: [embed], ephemeral: true };
+  if (interaction.deferred) {
+    await interaction.editReply(embedPayload);
+  } else if (interaction.replied) {
+    await interaction.followUp(embedPayload);
+  } else {
+    await interaction.reply(embedPayload);
+  }
 }
 
 async function showWalletMenu(interaction) {
