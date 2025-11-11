@@ -5697,21 +5697,6 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-  let alreadyAcknowledged = interaction.deferred || interaction.replied;
-
-  if (!alreadyAcknowledged) {
-    try {
-      await interaction.deferReply({ ephemeral: true });
-      alreadyAcknowledged = true;
-    } catch (error) {
-      if (error.code === 40060 || error.code === 10062) {
-        alreadyAcknowledged = true;
-      } else {
-        throw error;
-      }
-    }
-  }
-
   const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
@@ -5754,17 +5739,42 @@ async function handleMainMenuCommand(interaction) {
 
   const payload = { embeds: [embed], components: [row] };
 
-  if (interaction.deferred) {
+  const isAcknowledged = () => interaction.deferred || interaction.replied;
+
+  const attemptEdit = async () => {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: true });
+    }
     await interaction.editReply(payload);
+  };
+
+  try {
+    await attemptEdit();
     return;
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062 && error.code !== 'InteractionNotReplied') {
+      throw error;
+    }
   }
 
-  if (interaction.replied || alreadyAcknowledged) {
-    await interaction.followUp({ ...payload, ephemeral: true });
-    return;
+  if (isAcknowledged()) {
+    try {
+      await interaction.followUp({ ...payload, ephemeral: true });
+      return;
+    } catch (followError) {
+      if (followError.code !== 40060 && followError.code !== 10062 && followError.code !== 'InteractionNotReplied') {
+        throw followError;
+      }
+    }
   }
 
-  await interaction.reply({ ...payload, ephemeral: true });
+  try {
+    await interaction.reply({ ...payload, ephemeral: true });
+  } catch (replyError) {
+    if (replyError.code !== 40060 && replyError.code !== 10062) {
+      throw replyError;
+    }
+  }
 }
 
 async function handleMainMenuButton(interaction) {
