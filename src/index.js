@@ -5683,6 +5683,14 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
+  try {
+    await interaction.deferReply({ ephemeral: true });
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+  }
+
   const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
@@ -5721,29 +5729,10 @@ async function handleMainMenuCommand(interaction) {
 
   const payload = { embeds: [embed], components: [row] };
 
-  const sendEphemeral = async () => {
-    if (interaction.deferred) {
-      await interaction.editReply(payload);
-    } else if (interaction.replied) {
-      await interaction.followUp({ ...payload, ephemeral: true });
-    } else {
-      await interaction.reply({ ...payload, ephemeral: true });
-    }
-  };
-
-  try {
-    await sendEphemeral();
-  } catch (error) {
-    if (error.code === 40060 || error.code === 10062) {
-      // Ya fue reconocido; intenta followUp como último recurso
-      try {
-        await interaction.followUp({ ...payload, ephemeral: true });
-      } catch (followError) {
-        console.error('Error enviando menú principal (followUp):', followError);
-      }
-    } else {
-      throw error;
-    }
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(payload);
+  } else {
+    await interaction.reply({ ...payload, ephemeral: true });
   }
 }
 
