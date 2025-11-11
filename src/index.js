@@ -13,6 +13,7 @@ console.log('🔥 LOG 6: Express loaded');
 require('dotenv').config();
 console.log('🔥 LOG 7: Dotenv loaded');
 const TwitterRSSService = require('./services/twitterRSS');
+const { getCalendarEvents } = require('./services/googleCalendar');
 console.log('🔥 LOG 8: Twitter RSS Service loaded');
 
 // 🚀 DEPLOYMENT VERIFICATION LOG
@@ -86,6 +87,15 @@ const WALLET_CHANNEL_VALUE_PREFIX = 'channel:';
 const WALLET_PROJECT_VALUE_PREFIX = 'project:';
 const WALLET_CHAIN_VALUE_PREFIX = 'chain:';
 const WALLET_NO_LABEL_DISPLAY = 'Sin etiqueta';
+
+const CALENDAR_RANGES = {
+  hoy: { label: 'Hoy', range: 'today', emoji: '📅' },
+  tresdias: { label: 'Próximos 3 días', range: '3days', emoji: '🗓️' },
+  semana: { label: 'Próxima semana', range: 'week', emoji: '🗓️' },
+  mes: { label: 'Próximo mes', range: 'month', emoji: '📆' }
+};
+const CALENDAR_DISPLAY_LOCALE = process.env.GOOGLE_CALENDAR_LOCALE || 'es-ES';
+const CALENDAR_DISPLAY_TIMEZONE = process.env.GOOGLE_CALENDAR_DISPLAY_TZ || 'UTC';
 
 // Crear tabla de configuración del servidor si no existe
 async function initializeServerConfig() {
@@ -656,6 +666,26 @@ const commands = [
           option.setName('username')
             .setDescription('Nombre de usuario de Twitter (sin @)')
             .setRequired(true))),
+
+  new SlashCommandBuilder()
+    .setName('calendario')
+    .setDescription('Consultar eventos del calendario Monad')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('hoy')
+        .setDescription('Mostrar los eventos de hoy'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('tresdias')
+        .setDescription('Mostrar eventos de los próximos 3 días'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('semana')
+        .setDescription('Mostrar eventos de la próxima semana'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('mes')
+        .setDescription('Mostrar eventos del próximo mes')),
 
   new SlashCommandBuilder()
     .setName('wallet')
@@ -1744,6 +1774,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'twitter':
         await handleTwitterCommand(interaction);
         break;
+      case 'calendario':
+        await handleCalendarCommand(interaction);
+        break;
       case 'wallet':
         await handleWalletCommand(interaction);
         break;
@@ -1880,6 +1913,11 @@ client.on('interactionCreate', async interaction => {
   try {
     if (interaction.customId.startsWith('wallet_')) {
       await handleWalletButton(interaction);
+      return;
+    }
+
+    if (interaction.customId.startsWith('calendar_')) {
+      await handleCalendarButton(interaction);
       return;
     }
 
@@ -4078,6 +4116,260 @@ async function createWalletChain(guildId, displayName, keyInput) {
   return { chainKey, displayName: trimmedName };
 }
 
+async function handleCalendarCommand(interaction) {
+  let subcommand = 'hoy';
+  try {
+    subcommand = interaction.options.getSubcommand();
+  } catch (error) {
+    // Ignorar si no hay subcomando (no debería ocurrir)
+  }
+
+  const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
+
+  try {
+    await interaction.deferReply({ flags: 64 });
+  } catch (error) {
+    if (error.code !== 40060 && error.code !== 10062) {
+      throw error;
+    }
+  }
+
+  await respondCalendarRange(interaction, rangeKey);
+}
+
+async function handleCalendarButton(interaction) {
+  const { customId } = interaction;
+
+  if (customId === 'calendar_show_menu') {
+    await showCalendarMenu(interaction);
+    return;
+  }
+
+  if (customId.startsWith('calendar_show_')) {
+    const rangeKey = customId.replace('calendar_show_', '');
+    try {
+      await interaction.deferReply({ flags: 64 });
+    } catch (error) {
+      if (error.code !== 40060 && error.code !== 10062) {
+        throw error;
+      }
+    }
+    await respondCalendarRange(interaction, rangeKey);
+    return;
+  }
+
+  if (!interaction.replied && !interaction.deferred) {
+    await interaction.reply({
+      content: '❌ Opción de calendario no reconocida.',
+      flags: 64
+    });
+  }
+}
+
+async function respondCalendarRange(interaction, rangeKey) {
+  const rangeConfig = CALENDAR_RANGES[rangeKey] || CALENDAR_RANGES.hoy;
+
+  try {
+    const events = await getCalendarEvents(rangeConfig.range);
+    const embed = buildCalendarEmbed(rangeKey, events);
+
+    if (interaction.deferred) {
+      await interaction.editReply({ content: null, embeds: [embed], components: [] });
+    } else if (interaction.replied) {
+      await interaction.followUp({ embeds: [embed], flags: 64 });
+    } else {
+      await interaction.reply({ embeds: [embed], flags: 64 });
+    }
+  } catch (error) {
+    console.error('Error obteniendo eventos del calendario:', error);
+    const message = '❌ No se pudieron obtener los eventos. Verifica la configuración del calendario.';
+
+    if (interaction.deferred) {
+      await interaction.editReply({ content: message, embeds: [], components: [] });
+    } else if (interaction.replied) {
+      await interaction.followUp({ content: message, flags: 64 });
+    } else {
+      await interaction.reply({ content: message, flags: 64 });
+    }
+  }
+}
+
+function buildCalendarEmbed(rangeKey, events) {
+  const rangeConfig = CALENDAR_RANGES[rangeKey] || CALENDAR_RANGES.hoy;
+  const emoji = rangeConfig.emoji || '🗓️';
+
+  const embed = new EmbedBuilder()
+    .setTitle(`${emoji} Calendario Monad — ${rangeConfig.label}`)
+    .setColor(0xF97316)
+    .setTimestamp(new Date())
+    .setFooter({ text: `Zona horaria mostrada: ${CALENDAR_DISPLAY_TIMEZONE}` });
+
+  if (!events || events.length === 0) {
+    embed.setDescription('No hay eventos programados en este rango.');
+    return embed;
+  }
+
+  let description = '';
+  let countIncluded = 0;
+
+  for (const event of events) {
+    const block = formatCalendarEventBlock(event);
+    const separator = description ? '\n\n' : '';
+
+    if ((description + separator + block).length > 4000) {
+      break;
+    }
+
+    description += separator + block;
+    countIncluded++;
+  }
+
+  embed.setDescription(description);
+
+  if (countIncluded < events.length) {
+    embed.addFields({
+      name: 'Más eventos',
+      value: `... y ${events.length - countIncluded} evento(s) adicionales en este rango.`,
+      inline: false
+    });
+  }
+
+  return embed;
+}
+
+function formatCalendarEventBlock(event) {
+  const title = escapeMarkdown(event.summary || 'Sin título');
+  const timeInfo = formatCalendarEventTime(event);
+  const location = event.location ? `\n📍 ${escapeMarkdown(truncateString(event.location, 150))}` : '';
+  const link = event.htmlLink ? `\n🔗 [Abrir en Google Calendar](${event.htmlLink})` : '';
+
+  return `**${title}**\n${timeInfo}${location}${link}`;
+}
+
+function formatCalendarEventTime(event) {
+  const locale = CALENDAR_DISPLAY_LOCALE;
+  const timeZone = CALENDAR_DISPLAY_TIMEZONE;
+
+  const dateFormatter = new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeZone
+  });
+
+  const dateTimeFormatter = new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone
+  });
+
+  if (event.start?.dateTime) {
+    const start = new Date(event.start.dateTime);
+    const end = event.end?.dateTime ? new Date(event.end.dateTime) : null;
+    const startStr = dateTimeFormatter.format(start);
+    const endStr = end ? dateTimeFormatter.format(end) : null;
+
+    if (endStr && endStr !== startStr) {
+      return `🕒 ${startStr} — ${endStr} (${timeZone})`;
+    }
+
+    return `🕒 ${startStr} (${timeZone})`;
+  }
+
+  if (event.start?.date) {
+    const start = new Date(`${event.start.date}T00:00:00Z`);
+    const end = event.end?.date ? new Date(`${event.end.date}T00:00:00Z`) : null;
+    let rangeText = dateFormatter.format(start);
+
+    if (end) {
+      const endAdjusted = new Date(end.getTime() - 1);
+      if (endAdjusted > start) {
+        rangeText += ` — ${dateFormatter.format(endAdjusted)}`;
+      }
+    }
+
+    return `📅 ${rangeText} • Todo el día`;
+  }
+
+  return '🕒 Horario no especificado';
+}
+
+function truncateString(text, maxLength = 200) {
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+async function showCalendarMenu(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    try {
+      await interaction.deferReply({ flags: 64 });
+    } catch (error) {
+      if (error.code !== 40060 && error.code !== 10062) {
+        throw error;
+      }
+    }
+  }
+
+  const rangeKey = 'tresdias';
+  let upcomingCount = null;
+
+  try {
+    const upcomingEvents = await getCalendarEvents(CALENDAR_RANGES[rangeKey].range);
+    upcomingCount = upcomingEvents.length;
+  } catch (error) {
+    console.error('Error al obtener eventos para el menú de calendario:', error);
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🗓️ Calendario Monad')
+    .setDescription('Consulta los próximos eventos del calendario de la DAO.')
+    .setColor(0xF97316)
+    .setTimestamp(new Date())
+    .addFields(
+      {
+        name: 'Próximos 3 días',
+        value: upcomingCount === null ? 'No disponible por ahora.' : `${upcomingCount} evento(s) registrados.`,
+        inline: false
+      },
+      {
+        name: 'Comandos rápidos',
+        value: '`/calendario hoy` • `/calendario tresdias` • `/calendario semana` • `/calendario mes`',
+        inline: false
+      }
+    )
+    .setFooter({ text: `Zona horaria mostrada: ${CALENDAR_DISPLAY_TIMEZONE}` });
+
+  const rangeButtons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('calendar_show_hoy')
+      .setLabel('Hoy')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('calendar_show_tresdias')
+      .setLabel('Próximos 3 días')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('calendar_show_semana')
+      .setLabel('Semana')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('calendar_show_mes')
+      .setLabel('Mes')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const payload = {
+    embeds: [embed],
+    components: [rangeButtons]
+  };
+
+  if (interaction.deferred) {
+    await interaction.editReply(payload);
+  } else if (interaction.replied) {
+    await interaction.followUp({ ...payload, flags: 64 });
+  } else {
+    await interaction.reply({ ...payload, flags: 64 });
+  }
+}
+
 async function handleWalletCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
 
@@ -4555,7 +4847,7 @@ async function handleWalletEdit(interaction) {
     const finalChainDisplay = finalChainInfo?.display_name || project.chain;
 
     await interaction.editReply({ content: `✏️ Cambios aplicados en **${project.project_name}** (${finalChainDisplay}): ${appliedChanges.join(', ')}.` });
-        } catch (error) {
+            } catch (error) {
     console.error('Error in handleWalletEdit:', error);
     if (error.message === 'CHAIN_NOT_FOUND') {
       await interaction.editReply({ content: '❌ La red seleccionada no existe.' });
@@ -4579,7 +4871,7 @@ async function handleWalletChannelSet(interaction) {
   } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_channel_set respond ignored (already acknowledged).');
-        return;
+            return;
       }
       throw error;
     }
@@ -4588,8 +4880,8 @@ async function handleWalletChannelSet(interaction) {
   try {
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferReply({ ephemeral: true });
-    }
-  } catch (error) {
+          }
+        } catch (error) {
     if (error.code !== 40060 && error.code !== 10062) {
       throw error;
     }
@@ -4609,7 +4901,7 @@ async function handleWalletChannelSet(interaction) {
   try {
     await ensureServerConfigRow(guildId);
       
-      await pool.query(
+        await pool.query(
       `UPDATE server_config
        SET wallet_channel_id = $1,
            wallet_message_id = NULL,
@@ -4621,7 +4913,7 @@ async function handleWalletChannelSet(interaction) {
     await updateWalletMessage(guildId);
 
     await respond({ content: `✅ Canal configurado: <#${channel.id}>` });
-  } catch (error) {
+      } catch (error) {
     console.error('Error in handleWalletChannelSet:', error);
     await respond({ content: '❌ No se pudo configurar el canal.' });
   }
@@ -4634,10 +4926,10 @@ async function handleWalletChannelClear(interaction) {
     try {
       if (!interaction.deferred && !interaction.replied) {
         await interaction.reply({ ...payload, ephemeral: true });
-      } else {
+    } else {
         await interaction.followUp({ ...payload, ephemeral: true });
-      }
-    } catch (error) {
+    }
+  } catch (error) {
       if (error.code === 40060) {
         console.warn('wallet_channel_clear respond ignored (already acknowledged).');
       return;
@@ -4660,7 +4952,7 @@ async function handleWalletChannelClear(interaction) {
   try {
     const config = await getServerConfigRow(guildId);
 
-    await pool.query(
+      await pool.query(
       `UPDATE server_config
        SET wallet_channel_id = NULL,
            wallet_message_id = NULL,
@@ -4764,9 +5056,9 @@ async function handleWalletChainList(interaction) {
     
     if (chains.length === 0) {
       await interaction.editReply({ content: '📋 No hay redes configuradas. Usa `/wallet chain_add` para agregar nuevas redes.' });
-          return;
-        }
-        
+      return;
+    }
+    
     const lines = chains.map(chain => `• **${chain.display_name}** (${chain.chain_key})`);
     await interaction.editReply({ content: `🌐 Redes disponibles:\n${lines.join('\n')}` });
   } catch (error) {
@@ -4824,7 +5116,7 @@ function formatChannelOptionLabel(label, link) {
       return `${displayLabel} • ${guildIdPart}/${channelIdPart}`;
     }
     return `${displayLabel} • ${url.hostname}`;
-      } catch (error) {
+    } catch (error) {
     return `${displayLabel} • ${link.slice(-12)}`;
   }
 }
@@ -4958,9 +5250,9 @@ async function updateWalletMessage(guildId) {
     
     if (!channel || !channel.isTextBased()) {
       console.warn(`Wallet channel not accessible for guild ${guildId}`);
-      return;
-    }
-
+          return;
+        }
+        
     const projects = await getWalletProjectsWithChannels(guildId);
     const embeds = buildWalletEmbeds(projects, {});
 
@@ -5397,7 +5689,8 @@ async function handleMainMenuCommand(interaction) {
         .addFields(
       { name: '💎 NFT Tracker', value: 'Tracking de colecciones, alertas y herramientas relacionadas con NFTs.', inline: false },
       { name: '🐦 Tweet Tracker', value: 'Monitorea cuentas de X/Twitter y recibe notificaciones en Discord.', inline: false },
-      { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false }
+      { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false },
+      { name: '🗓️ Calendario Monad', value: 'Consulta los eventos programados de la DAO y obtén recordatorios rápidos.', inline: false }
     )
     .setColor(0x5865F2)
         .setTimestamp();
@@ -5413,6 +5706,11 @@ async function handleMainMenuCommand(interaction) {
         .setCustomId('menu_main_twitter')
         .setLabel('Tweet Tracker')
         .setEmoji('🐦')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('menu_main_calendar')
+        .setLabel('Calendario')
+        .setEmoji('🗓️')
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('menu_main_wallet')
@@ -5432,9 +5730,14 @@ async function handleMainMenuButton(interaction) {
       await showLegacyMainMenu(interaction);
       return;
     }
-    
+
     if (customId === 'menu_main_twitter') {
       await showTwitterTrackerMenu(interaction);
+      return;
+    }
+
+    if (customId === 'menu_main_calendar') {
+      await showCalendarMenu(interaction);
       return;
     }
     
@@ -5459,11 +5762,11 @@ async function handleMainMenuButton(interaction) {
 }
 
 async function showLegacyMainMenu(interaction) {
-  const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
     .setTitle('💎 NFT Tracker')
     .setDescription('Selecciona una sección para administrar el seguimiento de NFTs.')
     .setColor(0x22c55e)
-    .setTimestamp();
+      .setTimestamp();
 
   const row1 = new ActionRowBuilder()
     .addComponents(
@@ -5971,7 +6274,7 @@ async function handleWalletButton(interaction) {
     await showWalletAddChainSelector(interaction);
       return;
     }
-
+    
   if (customId.startsWith('wallet_add_page_')) {
     const match = customId.match(/^wallet_add_page_(.+)_(-?\d+)$/);
     if (!match) {
@@ -5987,7 +6290,7 @@ async function handleWalletButton(interaction) {
       await interaction.update({ content: '❌ La red seleccionada ya no existe.', components: [] });
       return;
     }
-
+    
     const projects = await getWalletProjectsByChain(interaction.guildId, chainInfo.chain_key);
     const { components, summary, totalProjects } = buildWalletAddProjectComponents({
       chainInfo,
@@ -6003,8 +6306,8 @@ async function handleWalletButton(interaction) {
       content: `${summary}\n${advisory}`,
       components
     });
-    return;
-  }
+      return;
+    }
     
   if (customId === 'wallet_edit') {
     await showWalletEditSelect(interaction);
@@ -6102,9 +6405,9 @@ client.on('interactionCreate', async interaction => {
 
       if (!match || !value) {
         await interaction.update({ content: '❌ Selección inválida.', components: [] });
-        return;
-      }
-
+      return;
+    }
+    
       const chainKey = match[1];
 
       if (value.startsWith('new:')) {

@@ -92,6 +92,9 @@ build/
 tmp/
 temp/
 
+# Local credentials
+config/calendariomonad-af3e396d2700.json
+
 
 
 
