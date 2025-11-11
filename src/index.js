@@ -5951,7 +5951,16 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
 
   for (let i = 10; i < embeds.length; i += 10) {
     const chunk = embeds.slice(i, i + 10);
-    await interaction.followUp({ embeds: chunk, ephemeral: true });
+    try {
+      await interaction.followUp({ embeds: chunk, ephemeral: true });
+    } catch (error) {
+      if (error?.code === 40060 || error?.code === 10062) {
+        console.warn('wallet_list followUp ignored (interaction already acknowledged).');
+        break;
+      }
+      console.error('Error sending additional wallet list chunk:', error);
+      break;
+    }
   }
 }
 
