@@ -55,6 +55,19 @@ const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 console.log('🔥 LOG 12: DISCORD_CLIENT_ID loaded:', !!DISCORD_CLIENT_ID);
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
 console.log('🔥 LOG 13: DISCORD_GUILD_ID loaded:', !!DISCORD_GUILD_ID);
+const DISCORD_GUILD_IDS = (process.env.DISCORD_GUILD_IDS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
+if (DISCORD_GUILD_IDS.length) {
+  console.log('🔥 LOG 13b: DISCORD_GUILD_IDS loaded:', DISCORD_GUILD_IDS.join(', '));
+}
+const TARGET_GUILD_IDS = DISCORD_GUILD_IDS.length
+  ? DISCORD_GUILD_IDS
+  : (DISCORD_GUILD_ID ? [DISCORD_GUILD_ID] : []);
+if (!TARGET_GUILD_IDS.length) {
+  console.warn('⚠️ No se configuró ningún DISCORD_GUILD_ID/IDS; los comandos slash no podrán registrarse.');
+}
 const DATABASE_URL = process.env.DATABASE_URL;
 console.log('🔥 LOG 14: DATABASE_URL loaded:', !!DATABASE_URL);
 const MAGIC_EDEN_API_KEY = process.env.MAGIC_EDEN_API_KEY;
@@ -904,13 +917,17 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 (async () => {
   try {
     console.log('🔄 Registrando comandos slash...');
-    
-    await rest.put(
-      Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID),
-      { body: commands }
-    );
-    
-    console.log('✅ Comandos slash registrados exitosamente');
+    if (!TARGET_GUILD_IDS.length) {
+      console.warn('⚠️ No hay guilds configurados; omitiendo registro de comandos.');
+    } else {
+      for (const guildId of TARGET_GUILD_IDS) {
+        await rest.put(
+          Routes.applicationGuildCommands(DISCORD_CLIENT_ID, guildId),
+          { body: commands }
+        );
+        console.log(`✅ Comandos slash registrados exitosamente para ${guildId}`);
+      }
+    }
   } catch (error) {
     console.error('❌ Error registrando comandos:', error);
   }

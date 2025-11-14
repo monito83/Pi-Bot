@@ -64,6 +64,9 @@ npm run dev
 ```env
 DISCORD_BOT_TOKEN=tu_token
 DISCORD_CLIENT_ID=tu_client_id
+DISCORD_GUILD_ID=un_solo_servidor
+# o bien
+DISCORD_GUILD_IDS=server_id_pruebas,server_id_dao
 DATABASE_URL=tu_railway_postgresql_url
 MAGIC_EDEN_API_KEY=tu_api_key
 MONAD_RPC_URL=https://rpc.monad.xyz
