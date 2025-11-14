@@ -14,6 +14,7 @@ require('dotenv').config();
 console.log('🔥 LOG 7: Dotenv loaded');
 const TwitterRSSService = require('./services/twitterRSS');
 const { getCalendarEvents, getCalendarEventsBetween } = require('./services/googleCalendar');
+const faucetModule = require('./modules/faucet');
 console.log('🔥 LOG 8: Twitter RSS Service loaded');
 
 // 🚀 DEPLOYMENT VERIFICATION LOG
@@ -82,6 +83,8 @@ console.log('🔥 LOG 18: PostgreSQL pool created');
 // Inicializar servicio de Twitter RSS
 const twitterService = new TwitterRSSService();
 console.log('🐦 Twitter RSS service initialized');
+faucetModule.setup({ pool, client });
+console.log('💧 Faucet module configured');
 
 const WALLET_CHANNEL_VALUE_PREFIX = 'channel:';
 const WALLET_PROJECT_VALUE_PREFIX = 'project:';
@@ -430,6 +433,7 @@ async function initializeCalendarSchema() {
 initializeTwitterTables();
 initializeWalletSchema();
 initializeCalendarSchema();
+faucetModule.initializeSchema();
 
 // Forzar creación de tabla alert_history después de un delay
 setTimeout(async () => {
@@ -892,6 +896,7 @@ const commands = [
         .setName('chain_list')
         .setDescription('Listar redes configuradas'))
 ];
+commands.push(faucetModule.getSlashCommandBuilder());
 console.log('Comandos a registrar:', commands.map(cmd => cmd.name));
 // Registrar comandos
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
@@ -1981,6 +1986,9 @@ client.on('interactionCreate', async (interaction) => {
       case 'wallet':
         await handleWalletCommand(interaction);
         break;
+      case 'faucet':
+        await faucetModule.handleSlashCommand(interaction);
+        break;
     }
   } catch (error) {
     console.error(`Error handling command ${commandName}:`, error);
@@ -2112,6 +2120,11 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
   try {
+    if (faucetModule.isFaucetButton(interaction.customId)) {
+      await faucetModule.handleButtonInteraction(interaction);
+      return;
+    }
+
     if (interaction.customId.startsWith('wallet_')) {
       await handleWalletButton(interaction);
       return;
@@ -7086,6 +7099,11 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isModalSubmit()) return;
 
   try {
+    if (faucetModule.isFaucetModal(interaction.customId)) {
+      await faucetModule.handleModalSubmit(interaction);
+      return;
+    }
+
     if (interaction.customId.startsWith('wallet_add_modal_')) {
       const chainKey = interaction.customId.replace('wallet_add_modal_', '');
       const chainInfo = await getWalletChainByKey(interaction.guildId, chainKey);

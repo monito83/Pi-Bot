@@ -41,6 +41,14 @@
 - `/wallet channel_set <canal>` - Configurar canal donde se publica la lista
 - `/wallet channel_clear` - Limpiar canal configurado
 
+### 💧 Faucet MON
+- `/faucet menu` - Muestra un embed con botones para solicitar MON rápidamente y ver la dirección del faucet
+- `/faucet solicitar monto:<número> wallet:<0x...>` - Solicitud directa con un monto específico
+- `/faucet info` - Resumen de saldo, límites y dirección para recargar la billetera de la DAO
+- `/faucet configurar` - Actualiza límites, canales de log y montos predefinidos (solo administradores)
+
+Los botones del menú abren un modal para ingresar la wallet y confirman la transferencia on-chain usando la clave privada configurada en las variables de entorno.
+
 ## 🚀 Instalación
 
 ```bash
@@ -59,6 +67,10 @@ DISCORD_CLIENT_ID=tu_client_id
 DATABASE_URL=tu_railway_postgresql_url
 MAGIC_EDEN_API_KEY=tu_api_key
 MONAD_RPC_URL=https://rpc.monad.xyz
+# Faucet (ver env.example para el detalle completo)
+FAUCET_RPC_URL=https://rpc.monad.xyz
+FAUCET_PRIVATE_KEY=clave_privada_faucet
+FAUCET_PUBLIC_ADDRESS=0xWalletPublicaDAO
 ```
 
 ## 📊 Base de Datos (Railway PostgreSQL)
