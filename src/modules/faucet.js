@@ -216,7 +216,7 @@ async function handleSlashCommand(interaction) {
       break;
     }
     case 'info':
-      await respondWithInfo(interaction, { ephemeral: false });
+      await respondWithInfo(interaction, { ephemeral: true });
       break;
     case 'configurar':
       await handleConfigure(interaction);
