@@ -270,7 +270,12 @@ async function showFaucetMenu(interaction) {
   const embed = buildMenuEmbed({ interaction, settings, balance });
   const components = buildMenuComponents(settings);
 
-  await interaction.reply({ embeds: [embed], components, allowedMentions: { parse: [] } });
+  await interaction.reply({
+    embeds: [embed],
+    components,
+    allowedMentions: { parse: [] },
+    flags: 64
+  });
 }
 
 async function respondWithInfo(interaction, { ephemeral = false, compact = false } = {}) {
