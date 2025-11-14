@@ -257,7 +257,11 @@ async function handleModalSubmit(interaction) {
   const amountField = interaction.fields.getTextInputValue('faucet_amount');
   const amount = presetAmount ?? parseFloat(amountField);
 
-  await processFaucetRequest(interaction, { amount, wallet, source: 'modal' });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: 64 });
+  }
+
+  await processFaucetRequest(interaction, { amount, wallet, source: 'modal', skipDefer: true });
 }
 
 async function showFaucetMenu(interaction) {
@@ -284,7 +288,7 @@ async function respondWithInfo(interaction, { ephemeral = false, compact = false
 
 async function handleConfigure(interaction) {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-    await interaction.reply({ content: '❌ Solo administradores pueden usar este comando.', ephemeral: true });
+    await interaction.reply({ content: '❌ Solo administradores pueden usar este comando.', flags: 64 });
     return;
   }
 
@@ -315,7 +319,7 @@ async function handleConfigure(interaction) {
   if (typeof allowCustom === 'boolean') updates.custom_amount_enabled = allowCustom;
 
   if (Object.keys(updates).length === 0) {
-    await interaction.reply({ content: 'ℹ️ No se recibieron cambios.', ephemeral: true });
+    await interaction.reply({ content: 'ℹ️ No se recibieron cambios.', flags: 64 });
     return;
   }
 
@@ -324,18 +328,18 @@ async function handleConfigure(interaction) {
 
   await interaction.reply({
     content: `✅ Configuración actualizada.\n${summary}`,
-    ephemeral: true
+    flags: 64
   });
 }
 
-async function processFaucetRequest(interaction, { amount, wallet, source }) {
+async function processFaucetRequest(interaction, { amount, wallet, source, skipDefer = false }) {
   if (!interaction.guildId) {
     await safeReply(interaction, { content: '❌ Este faucet solo está disponible dentro del servidor.', ephemeral: true });
     return;
   }
 
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ ephemeral: true });
+  if (!skipDefer && !interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: 64 });
   }
 
   const settings = await ensureSettings(interaction.guildId);
