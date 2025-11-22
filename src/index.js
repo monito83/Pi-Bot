@@ -4902,15 +4902,29 @@ async function handleWalletAdd(interaction) {
 }
 
 async function handleWalletList(interaction) {
-  // Check if already acknowledged
+  let deferred = false;
+  
+  // Always defer if not already acknowledged
   if (!interaction.deferred && !interaction.replied) {
     try {
       await interaction.deferReply({ flags: 64 });
+      deferred = true;
   } catch (error) {
-      if (error.code !== 40060 && error.code !== 10062) {
-        throw error;
+      if (error.code === 40060 || error.code === 10062) {
+        // Already acknowledged, continue
+        deferred = true;
+      } else {
+        console.error('Error deferring in handleWalletList:', error);
+        try {
+          await interaction.reply({ content: '❌ Error al procesar la solicitud.', flags: 64 });
+        } catch (replyError) {
+          console.error('Error replying in handleWalletList:', replyError);
+        }
+        return;
       }
     }
+  } else {
+    deferred = true;
   }
 
   try {
@@ -4927,25 +4941,47 @@ async function handleWalletList(interaction) {
     const projects = await getWalletProjectsWithChannels(interaction.guildId, chainFilterKey);
     const embeds = buildWalletEmbeds(projects, { chainFilterKey, chainFilterName });
 
-    if (embeds.length <= 10) {
-      await interaction.editReply({ embeds });
+    if (!deferred) {
+      // If somehow not deferred, reply directly
+      if (embeds.length <= 10) {
+        await interaction.reply({ embeds, flags: 64 });
     } else {
-      await interaction.editReply({ embeds: embeds.slice(0, 10) });
-      for (let i = 10; i < embeds.length; i += 10) {
-        const chunk = embeds.slice(i, i + 10);
-        await interaction.followUp({ embeds: chunk, flags: 64 });
+        await interaction.reply({ embeds: embeds.slice(0, 10), flags: 64 });
+        for (let i = 10; i < embeds.length; i += 10) {
+          const chunk = embeds.slice(i, i + 10);
+          await interaction.followUp({ embeds: chunk, flags: 64 });
+        }
+      }
+    } else {
+      // Normal flow with editReply
+      if (embeds.length <= 10) {
+        await interaction.editReply({ embeds });
+      } else {
+        await interaction.editReply({ embeds: embeds.slice(0, 10) });
+        for (let i = 10; i < embeds.length; i += 10) {
+          const chunk = embeds.slice(i, i + 10);
+          await interaction.followUp({ embeds: chunk, flags: 64 });
+        }
       }
     }
   } catch (error) {
     console.error('Error in handleWalletList:', error);
-    if (error.message === 'CHAIN_NOT_FOUND') {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
+    try {
+      if (error.message === 'CHAIN_NOT_FOUND') {
+        if (deferred || interaction.deferred || interaction.replied) {
+          await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
+        } else {
+          await interaction.reply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.', flags: 64 });
+        }
       } else {
-        await interaction.reply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.', flags: 64 });
+        if (deferred || interaction.deferred || interaction.replied) {
+          await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
+        } else {
+          await interaction.reply({ content: '❌ No se pudo obtener la lista de proyectos.', flags: 64 });
+        }
       }
-    } else {
-      await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
+    } catch (replyError) {
+      console.error('Error sending error message in handleWalletList:', replyError);
     }
   }
 }
@@ -6988,11 +7024,11 @@ async function showWalletListChainSelector(interaction) {
   await interaction.reply({
     content: '¿Qué red quieres revisar?',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true
+    flags: 64
   });
 }
 
-// Helper function to validate embed size
+// Helper function to validate embed size - VERY conservative
 function validateEmbedSizeForSend(embed) {
   try {
     const embedData = embed.data;
@@ -7000,14 +7036,18 @@ function validateEmbedSizeForSend(embed) {
     const description = embedData.description || '';
     const footer = embedData.footer?.text || '';
     
-    // Calculate total size
-    const totalSize = title.length + description.length + footer.length + 250; // 250 for overhead
+    // Calculate total size with more conservative overhead
+    // Discord counts markdown formatting, links, timestamps, etc.
+    const overhead = 300; // Increased overhead for safety
+    const totalSize = title.length + description.length + footer.length + overhead;
     
-    // Check limits
+    // Check individual field limits
     if (title.length > 256) return { valid: false, size: totalSize, reason: 'Title too long' };
     if (description.length > 4096) return { valid: false, size: totalSize, reason: 'Description too long' };
     if (footer.length > 2048) return { valid: false, size: totalSize, reason: 'Footer too long' };
-    if (totalSize > 5800) return { valid: false, size: totalSize, reason: 'Total size exceeds 5800' };
+    
+    // Very conservative limit - stay well under 6000
+    if (totalSize > 5500) return { valid: false, size: totalSize, reason: `Total size ${totalSize} exceeds 5500 (too close to 6000 limit)` };
     
     return { valid: true, size: totalSize };
   } catch (error) {
@@ -7032,8 +7072,8 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
       const title = embedData.title || '';
       const footer = embedData.footer?.text || '';
       
-      // Truncate description to fit
-      const maxDesc = Math.max(0, 5800 - title.length - footer.length - 250);
+      // Truncate description to fit - very conservative
+      const maxDesc = Math.max(0, 5500 - title.length - footer.length - 300);
       if (description.length > maxDesc) {
         description = description.substring(0, maxDesc - 20) + '\n\n... (truncado)';
         embed.setDescription(description);
