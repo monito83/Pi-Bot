@@ -5714,11 +5714,88 @@ async function updateWalletMessage(guildId) {
     }
         
     const projects = await getWalletProjectsWithChannels(guildId);
-    const embeds = buildWalletEmbeds(projects, {});
+    let embeds = buildWalletEmbeds(projects, {});
 
-    // Discord limit: max 10 embeds per message
-    const MAX_EMBEDS_PER_MESSAGE = 10;
-    const firstChunk = embeds.slice(0, MAX_EMBEDS_PER_MESSAGE);
+    // Use the same validation as sendWalletListEmbed
+    // Final validation pass - validate and fix each embed before sending
+    const validatedEmbeds = [];
+    for (let i = 0; i < embeds.length; i++) {
+      const embed = embeds[i];
+      const validation = validateEmbedSizeForSend(embed);
+      
+      if (!validation.valid) {
+        console.warn(`⚠️ Embed ${i + 1} in updateWalletMessage exceeds limit (${validation.size}, ${validation.reason}), fixing...`);
+        const embedData = embed.data;
+        let description = embedData.description || '';
+        const title = embedData.title || '';
+        const footer = embedData.footer?.text || '';
+        
+        // Truncate description to fit - very conservative
+        const maxDesc = Math.max(0, 5500 - title.length - footer.length - 300);
+        if (description.length > maxDesc) {
+          description = description.substring(0, maxDesc - 20) + '\n\n... (truncado)';
+          embed.setDescription(description);
+        }
+        
+        // Re-validate
+        const reValidation = validateEmbedSizeForSend(embed);
+        if (!reValidation.valid) {
+          console.error(`⚠️ Embed ${i + 1} still too large after truncation, skipping...`);
+          continue; // Skip this embed
+        }
+      }
+      
+      validatedEmbeds.push(embed);
+    }
+    
+    if (validatedEmbeds.length === 0) {
+      console.error('❌ No se pudieron validar los embeds para el mensaje pineado');
+      return;
+    }
+    
+    embeds = validatedEmbeds;
+    
+    // FINAL validation - double check each embed one more time before sending
+    const finalValidatedEmbeds = [];
+    for (let i = 0; i < embeds.length; i++) {
+      const embed = embeds[i];
+      const finalCheck = validateEmbedSizeForSend(embed);
+      
+      if (!finalCheck.valid) {
+        console.error(`🚨 CRITICAL: Embed ${i + 1} failed final validation in updateWalletMessage (${finalCheck.size}, ${finalCheck.reason}), forcing truncation...`);
+        const embedData = embed.data;
+        let description = embedData.description || '';
+        const title = embedData.title || '';
+        const footer = embedData.footer?.text || '';
+        
+        // Ultra-aggressive truncation
+        const ultraMaxDesc = Math.max(0, 5000 - title.length - footer.length - 300);
+        if (description.length > ultraMaxDesc) {
+          description = description.substring(0, ultraMaxDesc - 30) + '\n\n... (contenido truncado por límite)';
+          embed.setDescription(description);
+        }
+        
+        // Final check - if still invalid, skip
+        const ultraCheck = validateEmbedSizeForSend(embed);
+        if (!ultraCheck.valid) {
+          console.error(`🚨 Embed ${i + 1} still invalid after ultra-truncation, SKIPPING`);
+          continue;
+        }
+      }
+      
+      finalValidatedEmbeds.push(embed);
+    }
+    
+    if (finalValidatedEmbeds.length === 0) {
+      console.error('❌ No se pudieron validar los embeds finales para el mensaje pineado');
+      return;
+    }
+    
+    embeds = finalValidatedEmbeds;
+    
+    // Use same conservative chunking as sendWalletListEmbed
+    const SAFE_EMBEDS_PER_MESSAGE = 3; // Very conservative: max 3 embeds per message
+    const firstChunk = embeds.slice(0, SAFE_EMBEDS_PER_MESSAGE);
 
     let messageId = config.wallet_message_id;
 
@@ -5730,34 +5807,49 @@ async function updateWalletMessage(guildId) {
           await existingMessage.pin().catch(() => {});
         }
         
-        // If there are more embeds, send them as follow-up messages
-        // Note: We only pin the first message to avoid cluttering
-        if (embeds.length > MAX_EMBEDS_PER_MESSAGE) {
-          for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
-            const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
+        // Delete old follow-up messages and send new ones
+        // Get replies to the pinned message
+        const replies = await channel.messages.fetch({ limit: 50 }).catch(() => ({ messages: new Map() }));
+        const repliesToDelete = [];
+        for (const [id, msg] of replies.messages || replies) {
+          if (msg.reference?.messageId === messageId) {
+            repliesToDelete.push(msg);
+          }
+        }
+        
+        // Delete old replies
+        for (const msg of repliesToDelete) {
+          await msg.delete().catch(() => {});
+        }
+        
+        // Send remaining embeds as follow-up messages
+        if (embeds.length > SAFE_EMBEDS_PER_MESSAGE) {
+          for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
+            const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
             await existingMessage.reply({ embeds: chunk }).catch(err => {
               console.warn('Error sending additional wallet list chunk in pinned message:', err.message);
             });
           }
         }
-          return;
+        return;
     } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
-        }
+    }
         
+    // Create new message
     const sentMessage = await channel.send({ embeds: firstChunk });
-        await pool.query(
+    await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
       [sentMessage.id, guildId]
     );
     await sentMessage.pin().catch(() => {});
     
     // Send additional embeds as follow-up messages if needed
-    if (embeds.length > MAX_EMBEDS_PER_MESSAGE) {
-      for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
-        const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
+    if (embeds.length > SAFE_EMBEDS_PER_MESSAGE) {
+      for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
+        const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
         await sentMessage.reply({ embeds: chunk }).catch(err => {
           console.warn('Error sending additional wallet list chunk:', err.message);
         });
@@ -7187,7 +7279,7 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
       const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
       try {
         await interaction.followUp({ embeds: chunk, flags: 64 });
-      } catch (error) {
+  } catch (error) {
         if (error?.code === 40060 || error?.code === 10062) {
           console.warn('wallet_list followUp ignored (interaction already acknowledged).');
           break;
