@@ -7104,6 +7104,57 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
   
   embeds = validatedEmbeds;
   
+  // FINAL validation - double check each embed one more time before sending
+  const finalValidatedEmbeds = [];
+  for (let i = 0; i < embeds.length; i++) {
+    const embed = embeds[i];
+    const finalCheck = validateEmbedSizeForSend(embed);
+    
+    if (!finalCheck.valid) {
+      console.error(`🚨 CRITICAL: Embed ${i + 1} failed final validation (${finalCheck.size}, ${finalCheck.reason}), forcing truncation...`);
+      const embedData = embed.data;
+      let description = embedData.description || '';
+      const title = embedData.title || '';
+      const footer = embedData.footer?.text || '';
+      
+      // Ultra-aggressive truncation
+      const ultraMaxDesc = Math.max(0, 5000 - title.length - footer.length - 300);
+      if (description.length > ultraMaxDesc) {
+        description = description.substring(0, ultraMaxDesc - 30) + '\n\n... (contenido truncado por límite)';
+        embed.setDescription(description);
+        console.log(`✅ Embed ${i + 1} truncated to ${description.length} chars`);
+      }
+      
+      // Final check - if still invalid, skip
+      const ultraCheck = validateEmbedSizeForSend(embed);
+      if (!ultraCheck.valid) {
+        console.error(`🚨 Embed ${i + 1} still invalid after ultra-truncation, SKIPPING`);
+        continue;
+      }
+    }
+    
+    // Log embed size for debugging
+    const embedData = embed.data;
+    const totalSize = (embedData.title?.length || 0) + (embedData.description?.length || 0) + (embedData.footer?.text?.length || 0) + 300;
+    console.log(`📊 Embed ${i + 1}/${embeds.length} size: ${totalSize} chars (title: ${embedData.title?.length || 0}, desc: ${embedData.description?.length || 0}, footer: ${embedData.footer?.text?.length || 0})`);
+    
+    finalValidatedEmbeds.push(embed);
+  }
+  
+  if (finalValidatedEmbeds.length === 0) {
+    const errorMsg = '❌ No se pudo generar la lista. Los proyectos son demasiado grandes para mostrar.';
+    if (asUpdate) {
+      await interaction.update({ content: errorMsg, components: [] });
+    } else if (interaction.deferred) {
+      await interaction.editReply({ content: errorMsg });
+    } else {
+      await interaction.reply({ content: errorMsg, flags: 64 });
+    }
+    return;
+  }
+  
+  embeds = finalValidatedEmbeds;
+  
   // Discord limit: max 10 embeds per message
   const MAX_EMBEDS_PER_MESSAGE = 10;
   
