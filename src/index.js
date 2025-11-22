@@ -4902,7 +4902,16 @@ async function handleWalletAdd(interaction) {
 }
 
 async function handleWalletList(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  // Check if already acknowledged
+  if (!interaction.deferred && !interaction.replied) {
+    try {
+      await interaction.deferReply({ flags: 64 });
+  } catch (error) {
+      if (error.code !== 40060 && error.code !== 10062) {
+        throw error;
+      }
+    }
+  }
 
   try {
     const chainOption = interaction.options.getString('chain');
@@ -4924,13 +4933,17 @@ async function handleWalletList(interaction) {
       await interaction.editReply({ embeds: embeds.slice(0, 10) });
       for (let i = 10; i < embeds.length; i += 10) {
         const chunk = embeds.slice(i, i + 10);
-        await interaction.followUp({ embeds: chunk, ephemeral: true });
+        await interaction.followUp({ embeds: chunk, flags: 64 });
       }
     }
   } catch (error) {
     console.error('Error in handleWalletList:', error);
     if (error.message === 'CHAIN_NOT_FOUND') {
-      await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
+      } else {
+        await interaction.reply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.', flags: 64 });
+      }
     } else {
       await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
     }
@@ -5692,7 +5705,7 @@ async function updateWalletMessage(guildId) {
           }
         }
           return;
-      } catch (error) {
+    } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
@@ -5795,7 +5808,7 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
       if (totalSize > 5800) return { valid: false, reason: 'Total size exceeds 5800 (too close to 6000 limit)', size: totalSize };
       
       return { valid: true, size: totalSize };
-    } catch (error) {
+      } catch (error) {
       return { valid: false, reason: 'Validation error', size: 0 };
     }
   };
@@ -5866,14 +5879,14 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
                 splitSuccess = true;
                 currentBlocks = secondHalf.length > 0 ? secondHalf : [block];
                 currentLength = currentBlocks.join('\n\n').length;
-                break;
+          break;
               } else {
                 // Reduce split size and try again
                 splitSize = Math.max(1, Math.floor(splitSize / 2));
                 console.warn(`⚠️ Split size ${splitSize * 2} too large (${val1.size}), trying ${splitSize}...`);
               }
             } else {
-              break;
+          break;
             }
           }
           
@@ -5972,7 +5985,7 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
           } else {
             allChunksValid = false;
             console.warn(`⚠️ Chunk size ${chunkSize} still too large (${chunkValidation.size}), reducing...`);
-            break;
+          break;
           }
         }
         
@@ -6383,18 +6396,18 @@ async function editWalletProjectById(projectId, guildId, { newName, newChainKey 
 }
 
 async function handleMainMenuCommand(interaction) {
-    const embed = new EmbedBuilder()
+      const embed = new EmbedBuilder()
     .setTitle('🤖 Panel Principal de Pi-Bot')
     .setDescription('Selecciona el módulo que quieres gestionar:')
-    .addFields(
+        .addFields(
       { name: '💎 NFT Tracker', value: 'Tracking de colecciones, alertas y herramientas relacionadas con NFTs.', inline: false },
       { name: '🐦 Tweet Tracker', value: 'Monitorea cuentas de X/Twitter y recibe notificaciones en Discord.', inline: false },
       { name: '📝 Submit Wallets', value: 'Gestiona los proyectos y canales para enviar wallets dentro del servidor.', inline: false },
       { name: '🗓️ Calendario Monad', value: 'Consulta los eventos programados de la DAO y obtén recordatorios rápidos.', inline: false }
     )
     .setColor(0x5865F2)
-      .setTimestamp();
-
+        .setTimestamp();
+      
   const row = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
@@ -6979,9 +6992,77 @@ async function showWalletListChainSelector(interaction) {
   });
 }
 
+// Helper function to validate embed size
+function validateEmbedSizeForSend(embed) {
+  try {
+    const embedData = embed.data;
+    const title = embedData.title || '';
+    const description = embedData.description || '';
+    const footer = embedData.footer?.text || '';
+    
+    // Calculate total size
+    const totalSize = title.length + description.length + footer.length + 250; // 250 for overhead
+    
+    // Check limits
+    if (title.length > 256) return { valid: false, size: totalSize, reason: 'Title too long' };
+    if (description.length > 4096) return { valid: false, size: totalSize, reason: 'Description too long' };
+    if (footer.length > 2048) return { valid: false, size: totalSize, reason: 'Footer too long' };
+    if (totalSize > 5800) return { valid: false, size: totalSize, reason: 'Total size exceeds 5800' };
+    
+    return { valid: true, size: totalSize };
+  } catch (error) {
+    return { valid: false, size: 0, reason: 'Validation error' };
+  }
+}
+
 async function sendWalletListEmbed(interaction, { chainKey = null, chainName = null, asUpdate = false } = {}) {
   const projects = await getWalletProjectsWithChannels(interaction.guildId, chainKey);
-  const embeds = buildWalletEmbeds(projects, { chainFilterKey: chainKey, chainFilterName: chainName });
+  let embeds = buildWalletEmbeds(projects, { chainFilterKey: chainKey, chainFilterName: chainName });
+  
+  // Final validation pass - validate and fix each embed before sending
+  const validatedEmbeds = [];
+  for (let i = 0; i < embeds.length; i++) {
+    const embed = embeds[i];
+    const validation = validateEmbedSizeForSend(embed);
+    
+    if (!validation.valid) {
+      console.warn(`⚠️ Embed ${i + 1} in sendWalletListEmbed exceeds limit (${validation.size}, ${validation.reason}), fixing...`);
+      const embedData = embed.data;
+      let description = embedData.description || '';
+      const title = embedData.title || '';
+      const footer = embedData.footer?.text || '';
+      
+      // Truncate description to fit
+      const maxDesc = Math.max(0, 5800 - title.length - footer.length - 250);
+      if (description.length > maxDesc) {
+        description = description.substring(0, maxDesc - 20) + '\n\n... (truncado)';
+        embed.setDescription(description);
+      }
+      
+      // Re-validate
+      const reValidation = validateEmbedSizeForSend(embed);
+      if (!reValidation.valid) {
+        console.error(`⚠️ Embed ${i + 1} still too large after truncation, skipping...`);
+        continue; // Skip this embed
+      }
+    }
+    
+    validatedEmbeds.push(embed);
+  }
+  
+  if (validatedEmbeds.length === 0) {
+    const errorMsg = '❌ No se pudo generar la lista. Los proyectos son demasiado grandes para mostrar.';
+    if (asUpdate) {
+      await interaction.update({ content: errorMsg, components: [] });
+    } else if (interaction.deferred) {
+      await interaction.editReply({ content: errorMsg });
+    } else {
+      await interaction.reply({ content: errorMsg, flags: 64 });
+    }
+    return;
+  }
+  
+  embeds = validatedEmbeds;
   
   // Discord limit: max 10 embeds per message
   const MAX_EMBEDS_PER_MESSAGE = 10;
@@ -7002,15 +7083,15 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
     await interaction.update({ content: null, embeds: firstChunk, components: [] });
   } else if (interaction.deferred) {
     await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
-    } else {
+  } else {
     await interaction.reply({ content: null, embeds: firstChunk, components: [], flags: 64 });
-    }
+  }
 
   for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
     const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
     try {
       await interaction.followUp({ embeds: chunk, flags: 64 });
-  } catch (error) {
+    } catch (error) {
       if (error?.code === 40060 || error?.code === 10062) {
         console.warn('wallet_list followUp ignored (interaction already acknowledged).');
         break;
