@@ -7155,10 +7155,52 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
   
   embeds = finalValidatedEmbeds;
   
-  // Discord limit: max 10 embeds per message
-  const MAX_EMBEDS_PER_MESSAGE = 10;
+  // Calculate total size of all embeds combined
+  let totalCombinedSize = 0;
+  for (const embed of embeds) {
+    const embedData = embed.data;
+    totalCombinedSize += (embedData.title?.length || 0) + (embedData.description?.length || 0) + (embedData.footer?.text?.length || 0) + 300;
+  }
+  console.log(`📊 Total combined size of ${embeds.length} embeds: ${totalCombinedSize} chars`);
   
-  if (embeds.length <= MAX_EMBEDS_PER_MESSAGE) {
+  // Discord limit: max 10 embeds per message, but we need to be very conservative
+  // Split into smaller chunks to avoid total size issues
+  // Even with individual embeds under limit, sending many together can cause issues
+  const MAX_EMBEDS_PER_MESSAGE = 10;
+  const SAFE_EMBEDS_PER_MESSAGE = 3; // Very conservative: max 3 embeds per message
+  
+  // Always split if we have more than 3 embeds
+  if (embeds.length > SAFE_EMBEDS_PER_MESSAGE) {
+    console.log(`⚠️ Splitting ${embeds.length} embeds into chunks of ${SAFE_EMBEDS_PER_MESSAGE} (conservative approach)...`);
+    const firstChunk = embeds.slice(0, SAFE_EMBEDS_PER_MESSAGE);
+    
+    if (asUpdate) {
+      await interaction.update({ content: null, embeds: firstChunk, components: [] });
+    } else if (interaction.deferred) {
+      await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
+    } else {
+      await interaction.reply({ content: null, embeds: firstChunk, components: [], flags: 64 });
+    }
+    
+    // Send remaining embeds as follow-ups
+    for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
+      const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
+      try {
+        await interaction.followUp({ embeds: chunk, flags: 64 });
+      } catch (error) {
+        if (error?.code === 40060 || error?.code === 10062) {
+          console.warn('wallet_list followUp ignored (interaction already acknowledged).');
+          break;
+        }
+        console.error('Error sending additional wallet list chunk:', error);
+        break;
+      }
+    }
+    return;
+  }
+  
+  // If we have 3 or fewer embeds, send them all at once
+  if (embeds.length <= SAFE_EMBEDS_PER_MESSAGE) {
     if (asUpdate) {
       await interaction.update({ content: null, embeds, components: [] });
     } else if (interaction.deferred) {
@@ -7167,15 +7209,6 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
       await interaction.reply({ content: null, embeds, components: [], flags: 64 });
     }
     return;
-  }
-
-  const firstChunk = embeds.slice(0, MAX_EMBEDS_PER_MESSAGE);
-  if (asUpdate) {
-    await interaction.update({ content: null, embeds: firstChunk, components: [] });
-  } else if (interaction.deferred) {
-    await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
-  } else {
-    await interaction.reply({ content: null, embeds: firstChunk, components: [], flags: 64 });
   }
 
   for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
