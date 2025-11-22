@@ -5661,35 +5661,60 @@ async function updateWalletMessage(guildId) {
     
     if (!channel || !channel.isTextBased()) {
       console.warn(`Wallet channel not accessible for guild ${guildId}`);
-          return;
-        }
+      return;
+    }
         
     const projects = await getWalletProjectsWithChannels(guildId);
     const embeds = buildWalletEmbeds(projects, {});
+
+    // Discord limit: max 10 embeds per message
+    const MAX_EMBEDS_PER_MESSAGE = 10;
+    const firstChunk = embeds.slice(0, MAX_EMBEDS_PER_MESSAGE);
 
     let messageId = config.wallet_message_id;
 
     if (messageId) {
       try {
         const existingMessage = await channel.messages.fetch(messageId);
-        await existingMessage.edit({ embeds });
+        await existingMessage.edit({ embeds: firstChunk });
         if (!existingMessage.pinned) {
           await existingMessage.pin().catch(() => {});
-            }
-            return;
-    } catch (error) {
+        }
+        
+        // If there are more embeds, send them as follow-up messages
+        // Note: We only pin the first message to avoid cluttering
+        if (embeds.length > MAX_EMBEDS_PER_MESSAGE) {
+          for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
+            const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
+            await existingMessage.reply({ embeds: chunk }).catch(err => {
+              console.warn('Error sending additional wallet list chunk in pinned message:', err.message);
+            });
+          }
+        }
+        return;
+      } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
     }
 
-    const sentMessage = await channel.send({ embeds });
-        await pool.query(
+    const sentMessage = await channel.send({ embeds: firstChunk });
+    await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
       [sentMessage.id, guildId]
-        );
+    );
     await sentMessage.pin().catch(() => {});
-      } catch (error) {
+    
+    // Send additional embeds as follow-up messages if needed
+    if (embeds.length > MAX_EMBEDS_PER_MESSAGE) {
+      for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
+        const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
+        await sentMessage.reply({ embeds: chunk }).catch(err => {
+          console.warn('Error sending additional wallet list chunk:', err.message);
+        });
+      }
+    }
+  } catch (error) {
     console.error('Error updating wallet message:', error);
   }
 }
@@ -5734,54 +5759,149 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   });
 
   // Discord embed total limit is 6000 characters (includes title, description, footer, etc.)
-  // We limit description to 3300 to leave room for title (~100), footer (~50), and overhead (~100)
+  // We limit description to 2500 to leave room for title (~100), footer (~100), and overhead (~200)
   // This ensures we stay well under the 6000 character total limit
-  const MAX_DESCRIPTION_LENGTH = 3300;
-  const MAX_EMBED_TOTAL_LENGTH = 6000;
+  const MAX_DESCRIPTION_LENGTH = 2500;
+  const MAX_EMBED_TOTAL_LENGTH = 5800; // Más conservador, dejar 200 de margen
   let currentBlocks = [];
   let currentLength = 0;
+
+  // Helper function to calculate actual embed size
+  const calculateEmbedSize = (title, description, footer) => {
+    return (title?.length || 0) + (description?.length || 0) + (footer?.length || 0) + 50; // +50 for overhead (timestamp, formatting)
+  };
 
   for (const block of blocks) {
     const separatorLength = currentBlocks.length ? 2 : 0; // "\n\n"
     const blockWithSeparator = block.length + separatorLength;
+    const newDescriptionLength = currentLength + blockWithSeparator;
     
-    // Check both description limit and estimated total embed size
-    const estimatedTitleLength = embeds.length > 0 ? 60 : 50; // "📋 Proyectos (1/5)" vs "📋 Proyectos"
-    const estimatedFooterLength = 50; // "chain_name • 47 proyecto(s)"
-    const estimatedOverhead = 100; // timestamp, formatting, etc.
-    const estimatedTotalLength = currentLength + blockWithSeparator + estimatedTitleLength + estimatedFooterLength + estimatedOverhead;
+    // Calculate actual sizes for title and footer
+    const totalPages = embeds.length + (currentBlocks.length > 0 ? 1 : 0);
+    const title = totalPages > 1
+      ? `📋 Proyectos con submit de wallets (${embeds.length + 1}/${totalPages + 1})`
+      : '📋 Proyectos con submit de wallets';
     
-    if (currentLength + blockWithSeparator > MAX_DESCRIPTION_LENGTH || estimatedTotalLength > MAX_EMBED_TOTAL_LENGTH) {
-      const embed = createBaseEmbed().setDescription(currentBlocks.join('\n\n'));
-      embeds.push(embed);
-      currentBlocks = [block];
-      currentLength = block.length;
+    const footerParts = [];
+    if (filterLabel) footerParts.push(filterLabel);
+    footerParts.push(`${totalProjects} proyecto(s)`);
+    const footer = footerParts.join(' • ');
+    
+    // Calculate actual total size
+    const actualTotalSize = calculateEmbedSize(title, newDescriptionLength > 0 ? currentBlocks.join('\n\n') + (currentBlocks.length ? '\n\n' : '') + block : '', footer);
+    
+    // Check both description limit and actual total embed size
+    if (newDescriptionLength > MAX_DESCRIPTION_LENGTH || actualTotalSize > MAX_EMBED_TOTAL_LENGTH) {
+      // Finalize current embed before starting new one
+      if (currentBlocks.length > 0) {
+        const finalTitle = embeds.length > 0
+          ? `📋 Proyectos con submit de wallets (${embeds.length + 1}/${embeds.length + 2})`
+          : '📋 Proyectos con submit de wallets';
+        const finalFooterParts = [];
+        if (filterLabel) finalFooterParts.push(filterLabel);
+        finalFooterParts.push(`${totalProjects} proyecto(s)`);
+        const finalFooter = finalFooterParts.join(' • ');
+        
+        const embed = createBaseEmbed()
+          .setDescription(currentBlocks.join('\n\n'))
+          .setTitle(finalTitle)
+          .setFooter({ text: finalFooter });
+        
+        // Validate final size before adding
+        const finalSize = calculateEmbedSize(finalTitle, currentBlocks.join('\n\n'), finalFooter);
+        if (finalSize > MAX_EMBED_TOTAL_LENGTH) {
+          console.warn(`⚠️ Embed size (${finalSize}) exceeds limit, splitting further...`);
+          // If still too large, split current blocks further
+          const half = Math.ceil(currentBlocks.length / 2);
+          const firstHalf = currentBlocks.slice(0, half);
+          const secondHalf = currentBlocks.slice(half);
+          
+          if (firstHalf.length > 0) {
+            const embed1 = createBaseEmbed()
+              .setDescription(firstHalf.join('\n\n'))
+              .setTitle(finalTitle)
+              .setFooter({ text: finalFooter });
+            embeds.push(embed1);
+          }
+          
+          currentBlocks = secondHalf.length > 0 ? secondHalf : [block];
+          currentLength = currentBlocks.join('\n\n').length;
+        } else {
+          embeds.push(embed);
+          currentBlocks = [block];
+          currentLength = block.length;
+        }
+      } else {
+        // If currentBlocks is empty, start with this block
+        currentBlocks = [block];
+        currentLength = block.length;
+      }
     } else {
       currentBlocks.push(block);
       currentLength += blockWithSeparator;
     }
   }
 
+  // Finalize remaining blocks
   if (currentBlocks.length) {
-    const embed = createBaseEmbed().setDescription(currentBlocks.join('\n\n'));
-    embeds.push(embed);
-  }
-
-  const totalPages = embeds.length;
-  embeds.forEach((embed, index) => {
-    const title =
-      totalPages > 1
-        ? `📋 Proyectos con submit de wallets (${index + 1}/${totalPages})`
-        : '📋 Proyectos con submit de wallets';
-    embed.setTitle(title);
-
+    const totalPages = embeds.length + 1;
+    const title = totalPages > 1
+      ? `📋 Proyectos con submit de wallets (${embeds.length + 1}/${totalPages})`
+      : '📋 Proyectos con submit de wallets';
+    
     const footerParts = [];
     if (filterLabel) footerParts.push(filterLabel);
     footerParts.push(`${totalProjects} proyecto(s)`);
-    embed.setFooter({ text: footerParts.join(' • ') });
+    const footer = footerParts.join(' • ');
+    
+    const embed = createBaseEmbed()
+      .setDescription(currentBlocks.join('\n\n'))
+      .setTitle(title)
+      .setFooter({ text: footer });
+    
+    // Final validation
+    const finalSize = calculateEmbedSize(title, currentBlocks.join('\n\n'), footer);
+    if (finalSize > MAX_EMBED_TOTAL_LENGTH) {
+      console.warn(`⚠️ Final embed size (${finalSize}) exceeds limit, splitting...`);
+      // Split into smaller chunks
+      const chunkSize = Math.ceil(currentBlocks.length / 2);
+      for (let i = 0; i < currentBlocks.length; i += chunkSize) {
+        const chunk = currentBlocks.slice(i, i + chunkSize);
+        const chunkTitle = embeds.length + Math.floor(i / chunkSize) + 1;
+        const chunkTotal = Math.ceil(currentBlocks.length / chunkSize);
+        const finalTitle = chunkTotal > 1
+          ? `📋 Proyectos con submit de wallets (${chunkTitle}/${embeds.length + chunkTotal})`
+          : '📋 Proyectos con submit de wallets';
+        
+        const chunkEmbed = createBaseEmbed()
+          .setDescription(chunk.join('\n\n'))
+          .setTitle(finalTitle)
+          .setFooter({ text: footer });
+        embeds.push(chunkEmbed);
+      }
+    } else {
+      embeds.push(embed);
+    }
+  }
+
+  // Final validation pass - ensure all embeds are under limit
+  const validatedEmbeds = [];
+  embeds.forEach((embed, index) => {
+    const embedData = embed.data;
+    const totalSize = calculateEmbedSize(embedData.title, embedData.description, embedData.footer?.text);
+    
+    if (totalSize > MAX_EMBED_TOTAL_LENGTH) {
+      console.warn(`⚠️ Embed ${index + 1} size (${totalSize}) exceeds limit, needs further splitting`);
+      // This shouldn't happen with our conservative limits, but handle it just in case
+      const description = embedData.description || '';
+      const maxDescLength = MAX_EMBED_TOTAL_LENGTH - (embedData.title?.length || 0) - (embedData.footer?.text?.length || 0) - 50;
+      const truncatedDesc = description.substring(0, maxDescLength) + '\n\n... (contenido truncado)';
+      embed.setDescription(truncatedDesc);
+    }
+    validatedEmbeds.push(embed);
   });
 
-  return embeds;
+  return validatedEmbeds;
 }
 
 function escapeMarkdown(text = '') {
@@ -6705,30 +6825,34 @@ async function showWalletListChainSelector(interaction) {
 async function sendWalletListEmbed(interaction, { chainKey = null, chainName = null, asUpdate = false } = {}) {
   const projects = await getWalletProjectsWithChannels(interaction.guildId, chainKey);
   const embeds = buildWalletEmbeds(projects, { chainFilterKey: chainKey, chainFilterName: chainName });
-  if (embeds.length <= 10) {
+  
+  // Discord limit: max 10 embeds per message
+  const MAX_EMBEDS_PER_MESSAGE = 10;
+  
+  if (embeds.length <= MAX_EMBEDS_PER_MESSAGE) {
     if (asUpdate) {
       await interaction.update({ content: null, embeds, components: [] });
     } else if (interaction.deferred) {
-    await interaction.editReply({ content: null, embeds, components: [] });
+      await interaction.editReply({ content: null, embeds, components: [] });
     } else {
-      await interaction.reply({ content: null, embeds, components: [], ephemeral: true });
+      await interaction.reply({ content: null, embeds, components: [], flags: 64 });
     }
     return;
   }
 
-  const firstChunk = embeds.slice(0, 10);
+  const firstChunk = embeds.slice(0, MAX_EMBEDS_PER_MESSAGE);
   if (asUpdate) {
     await interaction.update({ content: null, embeds: firstChunk, components: [] });
   } else if (interaction.deferred) {
     await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
   } else {
-    await interaction.reply({ content: null, embeds: firstChunk, components: [], ephemeral: true });
+    await interaction.reply({ content: null, embeds: firstChunk, components: [], flags: 64 });
   }
 
-  for (let i = 10; i < embeds.length; i += 10) {
-    const chunk = embeds.slice(i, i + 10);
+  for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
+    const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
     try {
-      await interaction.followUp({ embeds: chunk, ephemeral: true });
+      await interaction.followUp({ embeds: chunk, flags: 64 });
     } catch (error) {
       if (error?.code === 40060 || error?.code === 10062) {
         console.warn('wallet_list followUp ignored (interaction already acknowledged).');
