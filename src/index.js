@@ -921,10 +921,10 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
       console.warn('⚠️ No hay guilds configurados; omitiendo registro de comandos.');
     } else {
       for (const guildId of TARGET_GUILD_IDS) {
-        await rest.put(
+    await rest.put(
           Routes.applicationGuildCommands(DISCORD_CLIENT_ID, guildId),
-          { body: commands }
-        );
+      { body: commands }
+    );
         console.log(`✅ Comandos slash registrados exitosamente para ${guildId}`);
       }
     }
@@ -5691,15 +5691,15 @@ async function updateWalletMessage(guildId) {
             });
           }
         }
-        return;
+          return;
       } catch (error) {
         console.log('No se pudo actualizar el mensaje de wallet, se creará uno nuevo:', error.message);
         messageId = null;
       }
-    }
-
+        }
+        
     const sentMessage = await channel.send({ embeds: firstChunk });
-    await pool.query(
+        await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
       [sentMessage.id, guildId]
     );
@@ -5759,16 +5759,42 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   });
 
   // Discord embed total limit is 6000 characters (includes title, description, footer, etc.)
-  // We limit description to 2500 to leave room for title (~100), footer (~100), and overhead (~200)
+  // We limit description to 2000 to leave room for title (~100), footer (~100), and overhead (~300)
   // This ensures we stay well under the 6000 character total limit
-  const MAX_DESCRIPTION_LENGTH = 2500;
-  const MAX_EMBED_TOTAL_LENGTH = 5800; // Más conservador, dejar 200 de margen
+  const MAX_DESCRIPTION_LENGTH = 2000;
+  const MAX_EMBED_TOTAL_LENGTH = 5500; // Muy conservador, dejar 500 de margen
   let currentBlocks = [];
   let currentLength = 0;
 
-  // Helper function to calculate actual embed size
+  // Helper function to calculate actual embed size (more accurate)
   const calculateEmbedSize = (title, description, footer) => {
-    return (title?.length || 0) + (description?.length || 0) + (footer?.length || 0) + 50; // +50 for overhead (timestamp, formatting)
+    const titleLen = title?.length || 0;
+    const descLen = description?.length || 0;
+    const footerLen = footer?.length || 0;
+    // Overhead: timestamp (ISO string ~30), color field, formatting characters, etc.
+    const overhead = 150;
+    return titleLen + descLen + footerLen + overhead;
+  };
+
+  // Helper function to validate embed size by serializing it
+  const validateEmbedSize = (embed) => {
+    try {
+      const embedData = embed.data;
+      const title = embedData.title || '';
+      const description = embedData.description || '';
+      const footer = embedData.footer?.text || '';
+      const totalSize = calculateEmbedSize(title, description, footer);
+      
+      // Also check individual field limits
+      if (title.length > 256) return { valid: false, reason: 'Title too long', size: totalSize };
+      if (description.length > 4096) return { valid: false, reason: 'Description too long', size: totalSize };
+      if (footer.length > 2048) return { valid: false, reason: 'Footer too long', size: totalSize };
+      if (totalSize > 6000) return { valid: false, reason: 'Total size exceeds 6000', size: totalSize };
+      
+      return { valid: true, size: totalSize };
+      } catch (error) {
+      return { valid: false, reason: 'Validation error', size: 0 };
+    }
   };
 
   for (const block of blocks) {
@@ -5787,8 +5813,13 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
     footerParts.push(`${totalProjects} proyecto(s)`);
     const footer = footerParts.join(' • ');
     
+    // Calculate what the description would be if we add this block
+    const potentialDescription = currentBlocks.length > 0 
+      ? currentBlocks.join('\n\n') + '\n\n' + block
+      : block;
+    
     // Calculate actual total size
-    const actualTotalSize = calculateEmbedSize(title, newDescriptionLength > 0 ? currentBlocks.join('\n\n') + (currentBlocks.length ? '\n\n' : '') + block : '', footer);
+    const actualTotalSize = calculateEmbedSize(title, potentialDescription, footer);
     
     // Check both description limit and actual total embed size
     if (newDescriptionLength > MAX_DESCRIPTION_LENGTH || actualTotalSize > MAX_EMBED_TOTAL_LENGTH) {
@@ -5807,10 +5838,10 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
           .setTitle(finalTitle)
           .setFooter({ text: finalFooter });
         
-        // Validate final size before adding
-        const finalSize = calculateEmbedSize(finalTitle, currentBlocks.join('\n\n'), finalFooter);
-        if (finalSize > MAX_EMBED_TOTAL_LENGTH) {
-          console.warn(`⚠️ Embed size (${finalSize}) exceeds limit, splitting further...`);
+        // Validate embed before adding
+        const validation = validateEmbedSize(embed);
+        if (!validation.valid) {
+          console.warn(`⚠️ Embed size (${validation.size}) exceeds limit (${validation.reason}), splitting further...`);
           // If still too large, split current blocks further
           const half = Math.ceil(currentBlocks.length / 2);
           const firstHalf = currentBlocks.slice(0, half);
@@ -5821,7 +5852,24 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
               .setDescription(firstHalf.join('\n\n'))
               .setTitle(finalTitle)
               .setFooter({ text: finalFooter });
-            embeds.push(embed1);
+            const val1 = validateEmbedSize(embed1);
+            if (val1.valid) {
+              embeds.push(embed1);
+            } else {
+              // If even half is too large, split more aggressively
+              console.warn(`⚠️ Even half is too large (${val1.size}), splitting more aggressively...`);
+              const quarter = Math.ceil(firstHalf.length / 2);
+              for (let i = 0; i < firstHalf.length; i += quarter) {
+                const qChunk = firstHalf.slice(i, i + quarter);
+                if (qChunk.length > 0) {
+                  const qEmbed = createBaseEmbed()
+                    .setDescription(qChunk.join('\n\n'))
+                    .setTitle(finalTitle)
+                    .setFooter({ text: finalFooter });
+                  embeds.push(qEmbed);
+                }
+              }
+            }
           }
           
           currentBlocks = secondHalf.length > 0 ? secondHalf : [block];
@@ -5859,14 +5907,16 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
       .setTitle(title)
       .setFooter({ text: footer });
     
-    // Final validation
-    const finalSize = calculateEmbedSize(title, currentBlocks.join('\n\n'), footer);
-    if (finalSize > MAX_EMBED_TOTAL_LENGTH) {
-      console.warn(`⚠️ Final embed size (${finalSize}) exceeds limit, splitting...`);
+    // Final validation using validateEmbedSize
+    const validation = validateEmbedSize(embed);
+    if (!validation.valid) {
+      console.warn(`⚠️ Final embed size (${validation.size}) exceeds limit (${validation.reason}), splitting...`);
       // Split into smaller chunks
-      const chunkSize = Math.ceil(currentBlocks.length / 2);
+      const chunkSize = Math.max(1, Math.ceil(currentBlocks.length / 3)); // Split into 3 parts
       for (let i = 0; i < currentBlocks.length; i += chunkSize) {
         const chunk = currentBlocks.slice(i, i + chunkSize);
+        if (chunk.length === 0) continue;
+        
         const chunkTitle = embeds.length + Math.floor(i / chunkSize) + 1;
         const chunkTotal = Math.ceil(currentBlocks.length / chunkSize);
         const finalTitle = chunkTotal > 1
@@ -5877,7 +5927,26 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
           .setDescription(chunk.join('\n\n'))
           .setTitle(finalTitle)
           .setFooter({ text: footer });
-        embeds.push(chunkEmbed);
+        
+        // Validate each chunk before adding
+        const chunkValidation = validateEmbedSize(chunkEmbed);
+        if (chunkValidation.valid) {
+          embeds.push(chunkEmbed);
+        } else {
+          console.warn(`⚠️ Chunk still too large (${chunkValidation.size}), splitting even more...`);
+          // Split chunk in half
+          const half = Math.ceil(chunk.length / 2);
+          for (let j = 0; j < chunk.length; j += half) {
+            const subChunk = chunk.slice(j, j + half);
+            if (subChunk.length > 0) {
+              const subEmbed = createBaseEmbed()
+                .setDescription(subChunk.join('\n\n'))
+                .setTitle(finalTitle)
+                .setFooter({ text: footer });
+              embeds.push(subEmbed);
+            }
+          }
+        }
       }
     } else {
       embeds.push(embed);
@@ -5887,15 +5956,22 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   // Final validation pass - ensure all embeds are under limit
   const validatedEmbeds = [];
   embeds.forEach((embed, index) => {
-    const embedData = embed.data;
-    const totalSize = calculateEmbedSize(embedData.title, embedData.description, embedData.footer?.text);
+    const validation = validateEmbedSize(embed);
     
-    if (totalSize > MAX_EMBED_TOTAL_LENGTH) {
-      console.warn(`⚠️ Embed ${index + 1} size (${totalSize}) exceeds limit, needs further splitting`);
+    if (!validation.valid) {
+      console.warn(`⚠️ Embed ${index + 1} size (${validation.size}) exceeds limit (${validation.reason}), truncating...`);
       // This shouldn't happen with our conservative limits, but handle it just in case
+      const embedData = embed.data;
       const description = embedData.description || '';
-      const maxDescLength = MAX_EMBED_TOTAL_LENGTH - (embedData.title?.length || 0) - (embedData.footer?.text?.length || 0) - 50;
-      const truncatedDesc = description.substring(0, maxDescLength) + '\n\n... (contenido truncado)';
+      const title = embedData.title || '';
+      const footer = embedData.footer?.text || '';
+      
+      // Calculate max description length to stay under 6000
+      const maxDescLength = Math.max(0, 6000 - title.length - footer.length - 200);
+      const truncatedDesc = description.length > maxDescLength
+        ? description.substring(0, maxDescLength - 20) + '\n\n... (truncado)'
+        : description;
+      
       embed.setDescription(truncatedDesc);
     }
     validatedEmbeds.push(embed);
@@ -6324,7 +6400,7 @@ async function handleMainMenuButton(interaction) {
       await showCalendarMenu(interaction);
       return;
     }
-    
+
     if (customId === 'menu_main_wallet') {
       await showWalletMenu(interaction);
       return;
@@ -6718,10 +6794,10 @@ async function showWalletRemoveSelect(interaction) {
   const options = await getWalletProjectsForSelect(interaction.guildId);
 
   if (!options.length) {
-    await interaction.reply({ content: '📋 No hay proyectos para eliminar.', ephemeral: true });
+    await interaction.reply({ content: '📋 No hay proyectos para eliminar.', flags: 64 });
       return;
     }
-    
+
   const select = new StringSelectMenuBuilder()
     .setCustomId('wallet_remove_select')
     .setPlaceholder('Selecciona un proyecto para eliminar')
@@ -6730,7 +6806,7 @@ async function showWalletRemoveSelect(interaction) {
   await interaction.reply({
     content: 'Selecciona el proyecto que deseas eliminar:',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true
+    flags: 64
   });
 }
 
@@ -6738,10 +6814,10 @@ async function showWalletEditSelect(interaction) {
   const options = await getWalletProjectsForSelect(interaction.guildId);
 
   if (!options.length) {
-    await interaction.reply({ content: '📋 No hay proyectos para editar.', ephemeral: true });
+    await interaction.reply({ content: '📋 No hay proyectos para editar.', flags: 64 });
       return;
     }
-    
+
   const select = new StringSelectMenuBuilder()
     .setCustomId('wallet_edit_select')
     .setPlaceholder('Selecciona un proyecto para editar')
@@ -6750,7 +6826,7 @@ async function showWalletEditSelect(interaction) {
   await interaction.reply({
     content: 'Selecciona el proyecto que deseas editar:',
     components: [new ActionRowBuilder().addComponents(select)],
-    ephemeral: true
+    flags: 64
   });
 }
 
@@ -6760,7 +6836,7 @@ async function showWalletAddChainSelector(interaction) {
   const chains = await listWalletChains(guildId);
 
   if (!chains.length) {
-    await interaction.reply({ content: '❌ No hay redes configuradas. Usa `/wallet chain_add` para crear una.', ephemeral: true });
+    await interaction.reply({ content: '❌ No hay redes configuradas. Usa `/wallet chain_add` para crear una.', flags: 64 });
       return;
     }
     
@@ -6845,15 +6921,15 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
     await interaction.update({ content: null, embeds: firstChunk, components: [] });
   } else if (interaction.deferred) {
     await interaction.editReply({ content: null, embeds: firstChunk, components: [] });
-  } else {
+    } else {
     await interaction.reply({ content: null, embeds: firstChunk, components: [], flags: 64 });
-  }
+    }
 
   for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
     const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
     try {
       await interaction.followUp({ embeds: chunk, flags: 64 });
-    } catch (error) {
+  } catch (error) {
       if (error?.code === 40060 || error?.code === 10062) {
         console.warn('wallet_list followUp ignored (interaction already acknowledged).');
         break;
@@ -6939,7 +7015,7 @@ async function handleWalletButton(interaction) {
   
   if (customId === 'wallet_refresh') {
     await updateWalletMessage(interaction.guildId);
-    await interaction.reply({ content: '🔄 Lista actualizada y mensaje pineado refrescado.', ephemeral: true });
+    await interaction.reply({ content: '🔄 Lista actualizada y mensaje pineado refrescado.', flags: 64 });
     return;
   }
 
@@ -7250,7 +7326,7 @@ client.on('interactionCreate', async interaction => {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isModalSubmit()) return;
-
+  
   try {
     if (faucetModule.isFaucetModal(interaction.customId)) {
       await faucetModule.handleModalSubmit(interaction);
