@@ -5733,20 +5733,32 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
     return [header, ...channelLines].join('\n');
   });
 
-  const MAX_DESCRIPTION_LENGTH = 3800;
+  // Discord embed total limit is 6000 characters (includes title, description, footer, etc.)
+  // We limit description to 3300 to leave room for title (~100), footer (~50), and overhead (~100)
+  // This ensures we stay well under the 6000 character total limit
+  const MAX_DESCRIPTION_LENGTH = 3300;
+  const MAX_EMBED_TOTAL_LENGTH = 6000;
   let currentBlocks = [];
   let currentLength = 0;
 
   for (const block of blocks) {
     const separatorLength = currentBlocks.length ? 2 : 0; // "\n\n"
-    if (currentLength + block.length + separatorLength > MAX_DESCRIPTION_LENGTH) {
+    const blockWithSeparator = block.length + separatorLength;
+    
+    // Check both description limit and estimated total embed size
+    const estimatedTitleLength = embeds.length > 0 ? 60 : 50; // "📋 Proyectos (1/5)" vs "📋 Proyectos"
+    const estimatedFooterLength = 50; // "chain_name • 47 proyecto(s)"
+    const estimatedOverhead = 100; // timestamp, formatting, etc.
+    const estimatedTotalLength = currentLength + blockWithSeparator + estimatedTitleLength + estimatedFooterLength + estimatedOverhead;
+    
+    if (currentLength + blockWithSeparator > MAX_DESCRIPTION_LENGTH || estimatedTotalLength > MAX_EMBED_TOTAL_LENGTH) {
       const embed = createBaseEmbed().setDescription(currentBlocks.join('\n\n'));
       embeds.push(embed);
       currentBlocks = [block];
       currentLength = block.length;
     } else {
       currentBlocks.push(block);
-      currentLength += block.length + separatorLength;
+      currentLength += blockWithSeparator;
     }
   }
 
