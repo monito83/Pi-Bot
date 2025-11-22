@@ -5759,20 +5759,23 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   });
 
   // Discord embed total limit is 6000 characters (includes title, description, footer, etc.)
-  // We limit description to 2000 to leave room for title (~100), footer (~100), and overhead (~300)
+  // We limit description to 1800 to leave room for title (~100), footer (~100), and overhead (~400)
   // This ensures we stay well under the 6000 character total limit
-  const MAX_DESCRIPTION_LENGTH = 2000;
-  const MAX_EMBED_TOTAL_LENGTH = 5500; // Muy conservador, dejar 500 de margen
+  // Links in markdown can add extra overhead, so we're very conservative
+  const MAX_DESCRIPTION_LENGTH = 1800;
+  const MAX_EMBED_TOTAL_LENGTH = 5000; // Muy conservador, dejar 1000 de margen
   let currentBlocks = [];
   let currentLength = 0;
 
   // Helper function to calculate actual embed size (more accurate)
+  // Discord counts all characters including markdown formatting
   const calculateEmbedSize = (title, description, footer) => {
     const titleLen = title?.length || 0;
     const descLen = description?.length || 0;
     const footerLen = footer?.length || 0;
-    // Overhead: timestamp (ISO string ~30), color field, formatting characters, etc.
-    const overhead = 150;
+    // Overhead: timestamp (ISO string ~30), color field, formatting characters, markdown overhead, etc.
+    // Links in markdown format [text](url) can add significant overhead
+    const overhead = 250; // Increased overhead for safety
     return titleLen + descLen + footerLen + overhead;
   };
 
@@ -5789,10 +5792,10 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
       if (title.length > 256) return { valid: false, reason: 'Title too long', size: totalSize };
       if (description.length > 4096) return { valid: false, reason: 'Description too long', size: totalSize };
       if (footer.length > 2048) return { valid: false, reason: 'Footer too long', size: totalSize };
-      if (totalSize > 6000) return { valid: false, reason: 'Total size exceeds 6000', size: totalSize };
+      if (totalSize > 5800) return { valid: false, reason: 'Total size exceeds 5800 (too close to 6000 limit)', size: totalSize };
       
       return { valid: true, size: totalSize };
-      } catch (error) {
+    } catch (error) {
       return { valid: false, reason: 'Validation error', size: 0 };
     }
   };
@@ -5838,43 +5841,70 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
           .setTitle(finalTitle)
           .setFooter({ text: finalFooter });
         
-        // Validate embed before adding
+        // ALWAYS validate embed before adding, even if calculation says it's OK
         const validation = validateEmbedSize(embed);
         if (!validation.valid) {
           console.warn(`⚠️ Embed size (${validation.size}) exceeds limit (${validation.reason}), splitting further...`);
           // If still too large, split current blocks further
-          const half = Math.ceil(currentBlocks.length / 2);
-          const firstHalf = currentBlocks.slice(0, half);
-          const secondHalf = currentBlocks.slice(half);
+          let splitSuccess = false;
+          let attempts = 0;
+          let splitSize = Math.ceil(currentBlocks.length / 2);
           
-          if (firstHalf.length > 0) {
-            const embed1 = createBaseEmbed()
-              .setDescription(firstHalf.join('\n\n'))
-              .setTitle(finalTitle)
-              .setFooter({ text: finalFooter });
-            const val1 = validateEmbedSize(embed1);
-            if (val1.valid) {
-              embeds.push(embed1);
-            } else {
-              // If even half is too large, split more aggressively
-              console.warn(`⚠️ Even half is too large (${val1.size}), splitting more aggressively...`);
-              const quarter = Math.ceil(firstHalf.length / 2);
-              for (let i = 0; i < firstHalf.length; i += quarter) {
-                const qChunk = firstHalf.slice(i, i + quarter);
-                if (qChunk.length > 0) {
-                  const qEmbed = createBaseEmbed()
-                    .setDescription(qChunk.join('\n\n'))
-                    .setTitle(finalTitle)
-                    .setFooter({ text: finalFooter });
-                  embeds.push(qEmbed);
-                }
+          while (!splitSuccess && attempts < 5 && splitSize >= 1) {
+            attempts++;
+            const firstHalf = currentBlocks.slice(0, splitSize);
+            const secondHalf = currentBlocks.slice(splitSize);
+            
+            if (firstHalf.length > 0) {
+              const embed1 = createBaseEmbed()
+                .setDescription(firstHalf.join('\n\n'))
+                .setTitle(finalTitle)
+                .setFooter({ text: finalFooter });
+              const val1 = validateEmbedSize(embed1);
+              if (val1.valid) {
+                embeds.push(embed1);
+                splitSuccess = true;
+                currentBlocks = secondHalf.length > 0 ? secondHalf : [block];
+                currentLength = currentBlocks.join('\n\n').length;
+                break;
+              } else {
+                // Reduce split size and try again
+                splitSize = Math.max(1, Math.floor(splitSize / 2));
+                console.warn(`⚠️ Split size ${splitSize * 2} too large (${val1.size}), trying ${splitSize}...`);
               }
+            } else {
+              break;
             }
           }
           
-          currentBlocks = secondHalf.length > 0 ? secondHalf : [block];
-          currentLength = currentBlocks.join('\n\n').length;
+          if (!splitSuccess) {
+            // Last resort: add blocks one by one
+            console.warn(`⚠️ Splitting failed, adding blocks one by one...`);
+            for (const singleBlock of currentBlocks) {
+              const singleEmbed = createBaseEmbed()
+                .setDescription(singleBlock)
+                .setTitle(finalTitle)
+                .setFooter({ text: finalFooter });
+              const singleVal = validateEmbedSize(singleEmbed);
+              if (singleVal.valid) {
+                embeds.push(singleEmbed);
+              } else {
+                console.error(`⚠️ Even single block too large (${singleVal.size}), truncating...`);
+                // Truncate description
+                const maxDesc = 5800 - finalTitle.length - finalFooter.length - 250;
+                const truncated = singleBlock.substring(0, Math.max(0, maxDesc - 20)) + '\n\n... (truncado)';
+                const truncatedEmbed = createBaseEmbed()
+                  .setDescription(truncated)
+                  .setTitle(finalTitle)
+                  .setFooter({ text: finalFooter });
+                embeds.push(truncatedEmbed);
+              }
+            }
+            currentBlocks = [block];
+            currentLength = block.length;
+          }
         } else {
+          // Double-check validation before adding
           embeds.push(embed);
           currentBlocks = [block];
           currentLength = block.length;
@@ -5907,44 +5937,79 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
       .setTitle(title)
       .setFooter({ text: footer });
     
-    // Final validation using validateEmbedSize
+    // Final validation using validateEmbedSize - ALWAYS validate
     const validation = validateEmbedSize(embed);
     if (!validation.valid) {
       console.warn(`⚠️ Final embed size (${validation.size}) exceeds limit (${validation.reason}), splitting...`);
-      // Split into smaller chunks
-      const chunkSize = Math.max(1, Math.ceil(currentBlocks.length / 3)); // Split into 3 parts
-      for (let i = 0; i < currentBlocks.length; i += chunkSize) {
-        const chunk = currentBlocks.slice(i, i + chunkSize);
-        if (chunk.length === 0) continue;
+      // Try splitting with decreasing chunk sizes
+      let splitSuccess = false;
+      let chunkSize = Math.max(1, Math.ceil(currentBlocks.length / 2));
+      let attempts = 0;
+      
+      while (!splitSuccess && attempts < 5 && chunkSize >= 1) {
+        attempts++;
+        let allChunksValid = true;
+        const tempEmbeds = [];
         
-        const chunkTitle = embeds.length + Math.floor(i / chunkSize) + 1;
-        const chunkTotal = Math.ceil(currentBlocks.length / chunkSize);
-        const finalTitle = chunkTotal > 1
-          ? `📋 Proyectos con submit de wallets (${chunkTitle}/${embeds.length + chunkTotal})`
-          : '📋 Proyectos con submit de wallets';
+        for (let i = 0; i < currentBlocks.length; i += chunkSize) {
+          const chunk = currentBlocks.slice(i, i + chunkSize);
+          if (chunk.length === 0) continue;
+          
+          const chunkTitle = embeds.length + Math.floor(i / chunkSize) + 1;
+          const chunkTotal = Math.ceil(currentBlocks.length / chunkSize);
+          const finalTitle = chunkTotal > 1
+            ? `📋 Proyectos con submit de wallets (${chunkTitle}/${embeds.length + chunkTotal})`
+            : '📋 Proyectos con submit de wallets';
+          
+          const chunkEmbed = createBaseEmbed()
+            .setDescription(chunk.join('\n\n'))
+            .setTitle(finalTitle)
+            .setFooter({ text: footer });
+          
+          const chunkValidation = validateEmbedSize(chunkEmbed);
+          if (chunkValidation.valid) {
+            tempEmbeds.push(chunkEmbed);
+          } else {
+            allChunksValid = false;
+            console.warn(`⚠️ Chunk size ${chunkSize} still too large (${chunkValidation.size}), reducing...`);
+            break;
+          }
+        }
         
-        const chunkEmbed = createBaseEmbed()
-          .setDescription(chunk.join('\n\n'))
-          .setTitle(finalTitle)
-          .setFooter({ text: footer });
-        
-        // Validate each chunk before adding
-        const chunkValidation = validateEmbedSize(chunkEmbed);
-        if (chunkValidation.valid) {
-          embeds.push(chunkEmbed);
+        if (allChunksValid) {
+          embeds.push(...tempEmbeds);
+          splitSuccess = true;
         } else {
-          console.warn(`⚠️ Chunk still too large (${chunkValidation.size}), splitting even more...`);
-          // Split chunk in half
-          const half = Math.ceil(chunk.length / 2);
-          for (let j = 0; j < chunk.length; j += half) {
-            const subChunk = chunk.slice(j, j + half);
-            if (subChunk.length > 0) {
-              const subEmbed = createBaseEmbed()
-                .setDescription(subChunk.join('\n\n'))
-                .setTitle(finalTitle)
-                .setFooter({ text: footer });
-              embeds.push(subEmbed);
-            }
+          chunkSize = Math.max(1, Math.floor(chunkSize / 2));
+        }
+      }
+      
+      if (!splitSuccess) {
+        // Last resort: add blocks one by one
+        console.warn(`⚠️ Splitting failed, adding blocks one by one...`);
+        for (let i = 0; i < currentBlocks.length; i++) {
+          const singleBlock = currentBlocks[i];
+          const chunkTitle = embeds.length + i + 1;
+          const finalTitle = currentBlocks.length > 1
+            ? `📋 Proyectos con submit de wallets (${chunkTitle}/${embeds.length + currentBlocks.length})`
+            : '📋 Proyectos con submit de wallets';
+          
+          const singleEmbed = createBaseEmbed()
+            .setDescription(singleBlock)
+            .setTitle(finalTitle)
+            .setFooter({ text: footer });
+          const singleVal = validateEmbedSize(singleEmbed);
+          if (singleVal.valid) {
+            embeds.push(singleEmbed);
+          } else {
+            console.error(`⚠️ Even single block too large (${singleVal.size}), truncating...`);
+            const maxDesc = 5800 - finalTitle.length - footer.length - 250;
+            const truncated = singleBlock.substring(0, Math.max(0, maxDesc - 20)) + '\n\n... (truncado)';
+            const truncatedEmbed = createBaseEmbed()
+              .setDescription(truncated)
+              .setTitle(finalTitle)
+              .setFooter({ text: footer });
+            embeds.push(truncatedEmbed);
           }
         }
       }
@@ -5956,25 +6021,41 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   // Final validation pass - ensure all embeds are under limit
   const validatedEmbeds = [];
   embeds.forEach((embed, index) => {
-    const validation = validateEmbedSize(embed);
+    let validation = validateEmbedSize(embed);
     
     if (!validation.valid) {
       console.warn(`⚠️ Embed ${index + 1} size (${validation.size}) exceeds limit (${validation.reason}), truncating...`);
       // This shouldn't happen with our conservative limits, but handle it just in case
       const embedData = embed.data;
-      const description = embedData.description || '';
+      let description = embedData.description || '';
       const title = embedData.title || '';
       const footer = embedData.footer?.text || '';
       
-      // Calculate max description length to stay under 6000
-      const maxDescLength = Math.max(0, 6000 - title.length - footer.length - 200);
-      const truncatedDesc = description.length > maxDescLength
-        ? description.substring(0, maxDescLength - 20) + '\n\n... (truncado)'
-        : description;
-      
-      embed.setDescription(truncatedDesc);
+      // Calculate max description length to stay under 5800 (very conservative)
+      const maxDescLength = Math.max(0, 5800 - title.length - footer.length - 250);
+      if (description.length > maxDescLength) {
+        description = description.substring(0, maxDescLength - 20) + '\n\n... (truncado)';
+        embed.setDescription(description);
+        
+        // Re-validate after truncation
+        validation = validateEmbedSize(embed);
+        if (!validation.valid) {
+          console.error(`⚠️ Embed ${index + 1} still too large after truncation (${validation.size}), further truncating...`);
+          // Even more aggressive truncation
+          const ultraMaxDesc = Math.max(0, 5500 - title.length - footer.length - 250);
+          const ultraTruncated = description.substring(0, ultraMaxDesc - 20) + '\n\n... (truncado)';
+          embed.setDescription(ultraTruncated);
+        }
+      }
     }
-    validatedEmbeds.push(embed);
+    
+    // Final check - if still invalid, skip this embed
+    const finalValidation = validateEmbedSize(embed);
+    if (finalValidation.valid) {
+      validatedEmbeds.push(embed);
+    } else {
+      console.error(`⚠️ Embed ${index + 1} could not be fixed, skipping...`);
+    }
   });
 
   return validatedEmbeds;
