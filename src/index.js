@@ -5853,8 +5853,20 @@ async function updateWalletMessage(guildId) {
             
             try {
               // Use send() instead of reply() to ensure message is visible
+              // Add small delay between chunks to avoid rate limiting
+              if (chunkNumber > 1) {
+                await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+              }
               const sentReply = await channel.send({ embeds: chunk });
               console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
+              
+              // Verify message was actually sent
+              const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
+              if (verifyMsg) {
+                console.log(`✅ Chunk ${chunkNumber} verified: message exists in channel`);
+              } else {
+                console.warn(`⚠️ Chunk ${chunkNumber} warning: could not verify message existence`);
+              }
             } catch (err) {
               console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
               // Continue with next chunk even if one fails
@@ -5898,8 +5910,20 @@ async function updateWalletMessage(guildId) {
         
         try {
           // Use send() instead of reply() to ensure message is visible
+          // Add small delay between chunks to avoid rate limiting
+          if (chunkNumber > 1) {
+            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+          }
           const sentReply = await channel.send({ embeds: chunk });
           console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
+          
+          // Verify message was actually sent
+          const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
+          if (verifyMsg) {
+            console.log(`✅ Chunk ${chunkNumber} verified: message exists in channel`);
+          } else {
+            console.warn(`⚠️ Chunk ${chunkNumber} warning: could not verify message existence`);
+          }
         } catch (err) {
           console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
           // Continue with next chunk even if one fails
