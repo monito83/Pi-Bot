@@ -4969,7 +4969,19 @@ async function handleWalletList(interaction) {
 }
 
 async function handleWalletRemove(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  // Defer immediately to avoid interaction timeout
+  if (!interaction.deferred && !interaction.replied) {
+    try {
+      await interaction.deferReply({ flags: 64 });
+    } catch (error) {
+      if (error.code === 40060 || error.code === 10062) {
+        // Already acknowledged, continue
+      } else {
+        console.error('Error deferring in handleWalletRemove:', error);
+        return;
+      }
+    }
+  }
 
   const projectRaw = interaction.options.getString('project');
   const { projectId, projectName: projectNameInput } = parseWalletProjectOption(projectRaw);
@@ -5821,8 +5833,6 @@ async function updateWalletMessage(guildId) {
           const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
           console.log(`📌 Sending ${totalChunks - 1} additional chunks...`);
           
-          const sentMessages = [existingMessage]; // Store all sent messages for pinning in reverse order
-          
           for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
             const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
             const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
@@ -5843,7 +5853,6 @@ async function updateWalletMessage(guildId) {
               }
               const sentReply = await channel.send({ embeds: chunk });
               console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
-              sentMessages.push(sentReply);
               
               // Verify message was actually sent
               const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
@@ -5858,25 +5867,12 @@ async function updateWalletMessage(guildId) {
             }
           }
           
-          // Pin all messages in reverse order so they appear in correct order (Discord orders pins by pin time)
-          console.log(`📌 Pinning ${sentMessages.length} messages in reverse order...`);
-          for (let i = sentMessages.length - 1; i >= 0; i--) {
-            const msg = sentMessages[i];
-            try {
-              if (!msg.pinned) {
-                await msg.pin();
-                console.log(`📌 Message ${i + 1}/${sentMessages.length} pinned successfully`);
-                // Small delay between pins to avoid rate limiting
-                if (i > 0) {
-                  await new Promise(resolve => setTimeout(resolve, 300));
-                }
-              }
-            } catch (pinError) {
-              console.warn(`⚠️ Could not pin message ${i + 1}/${sentMessages.length}:`, pinError.message);
-            }
-          }
+          // Only pin the first message to avoid ordering issues
+          // Discord orders pinned messages by pin time, which causes confusion
+          // Users can manually pin additional messages if needed
+          console.log(`📌 Only the first message is pinned (to avoid ordering issues)`);
           
-          console.log(`📌 Finished sending and pinning all chunks for pinned message`);
+          console.log(`📌 Finished sending all chunks for pinned message`);
         }
         return;
     } catch (error) {
@@ -5899,8 +5895,6 @@ async function updateWalletMessage(guildId) {
       const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
       console.log(`📌 Sending ${totalChunks - 1} additional chunks for new pinned message...`);
       
-      const sentMessages = [sentMessage]; // Store all sent messages for pinning in reverse order
-      
       for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
         const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
         const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
@@ -5921,7 +5915,6 @@ async function updateWalletMessage(guildId) {
           }
           const sentReply = await channel.send({ embeds: chunk });
           console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
-          sentMessages.push(sentReply);
           
           // Verify message was actually sent
           const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
@@ -5936,25 +5929,12 @@ async function updateWalletMessage(guildId) {
         }
       }
       
-      // Pin all messages in reverse order so they appear in correct order (Discord orders pins by pin time)
-      console.log(`📌 Pinning ${sentMessages.length} messages in reverse order...`);
-      for (let i = sentMessages.length - 1; i >= 0; i--) {
-        const msg = sentMessages[i];
-        try {
-          if (!msg.pinned) {
-            await msg.pin();
-            console.log(`📌 Message ${i + 1}/${sentMessages.length} pinned successfully`);
-            // Small delay between pins to avoid rate limiting
-            if (i > 0) {
-              await new Promise(resolve => setTimeout(resolve, 300));
-            }
-          }
-        } catch (pinError) {
-          console.warn(`⚠️ Could not pin message ${i + 1}/${sentMessages.length}:`, pinError.message);
-        }
-      }
+      // Only pin the first message to avoid ordering issues
+      // Discord orders pinned messages by pin time, which causes confusion
+      // Users can manually pin additional messages if needed
+      console.log(`📌 Only the first message is pinned (to avoid ordering issues)`);
       
-      console.log(`📌 Finished sending and pinning all chunks for new pinned message`);
+      console.log(`📌 Finished sending all chunks for new pinned message`);
     }
   } catch (error) {
     console.error('Error updating wallet message:', error);
@@ -7069,10 +7049,116 @@ function createWalletChainModal() {
 
 async function getWalletProjectsForSelect(guildId) {
   const projects = await getWalletProjectsWithChannels(guildId);
-  return projects.slice(0, 25).map(project => ({
+  return projects.map(project => ({
     label: `${project.project_name} (${project.chain_display_name || project.chain})`,
-    value: project.id
+    value: project.id,
+    project_name: project.project_name,
+    chain: project.chain_display_name || project.chain
   }));
+}
+
+function buildWalletRemoveSelectComponents(projects, page = 0) {
+  const PAGE_SIZE = 25; // Discord limit
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const totalProjects = safeProjects.length;
+  const totalPages = Math.max(1, Math.ceil(totalProjects / PAGE_SIZE));
+  const safePage = Math.min(Math.max(Number.isFinite(page) ? page : 0, 0), totalPages - 1);
+  const start = safePage * PAGE_SIZE;
+  const currentProjects = safeProjects.slice(start, start + PAGE_SIZE);
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`wallet_remove_select_page_${safePage}`)
+    .setPlaceholder(
+      totalProjects
+        ? `Selecciona proyecto para eliminar (${safePage + 1}/${totalPages})`
+        : 'No hay proyectos'
+    );
+
+  currentProjects.forEach(project => {
+    const label = `${project.project_name} (${project.chain})`.slice(0, 100);
+    select.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(label)
+        .setValue(project.value || project.id)
+    );
+  });
+
+  const rows = [new ActionRowBuilder().addComponents(select)];
+
+  if (totalPages > 1) {
+    const navRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`wallet_remove_page_${safePage - 1}`)
+        .setLabel('⬅️ Anterior')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage === 0),
+      new ButtonBuilder()
+        .setCustomId(`wallet_remove_page_${safePage + 1}`)
+        .setLabel('Siguiente ➡️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1)
+    );
+    rows.push(navRow);
+  }
+
+  return {
+    components: rows,
+    totalProjects,
+    totalPages,
+    page: safePage
+  };
+}
+
+function buildWalletEditSelectComponents(projects, page = 0) {
+  const PAGE_SIZE = 25; // Discord limit
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const totalProjects = safeProjects.length;
+  const totalPages = Math.max(1, Math.ceil(totalProjects / PAGE_SIZE));
+  const safePage = Math.min(Math.max(Number.isFinite(page) ? page : 0, 0), totalPages - 1);
+  const start = safePage * PAGE_SIZE;
+  const currentProjects = safeProjects.slice(start, start + PAGE_SIZE);
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`wallet_edit_select_page_${safePage}`)
+    .setPlaceholder(
+      totalProjects
+        ? `Selecciona proyecto para editar (${safePage + 1}/${totalPages})`
+        : 'No hay proyectos'
+    );
+
+  currentProjects.forEach(project => {
+    const label = `${project.project_name} (${project.chain})`.slice(0, 100);
+    select.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(label)
+        .setValue(project.value || project.id)
+    );
+  });
+
+  const rows = [new ActionRowBuilder().addComponents(select)];
+
+  if (totalPages > 1) {
+    const navRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`wallet_edit_page_${safePage - 1}`)
+        .setLabel('⬅️ Anterior')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage === 0),
+      new ButtonBuilder()
+        .setCustomId(`wallet_edit_page_${safePage + 1}`)
+        .setLabel('Siguiente ➡️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1)
+    );
+    rows.push(navRow);
+  }
+
+  return {
+    components: rows,
+    totalProjects,
+    totalPages,
+    page: safePage
+  };
 }
 
 function buildWalletAddProjectComponents({ chainInfo, projects, page = 0 }) {
@@ -7144,44 +7230,66 @@ function buildWalletAddProjectComponents({ chainInfo, projects, page = 0 }) {
   };
 }
 
-async function showWalletRemoveSelect(interaction) {
-  const options = await getWalletProjectsForSelect(interaction.guildId);
+async function showWalletRemoveSelect(interaction, page = 0) {
+  const projects = await getWalletProjectsForSelect(interaction.guildId);
 
-  if (!options.length) {
-    await interaction.reply({ content: '📋 No hay proyectos para eliminar.', flags: 64 });
-      return;
+  if (!projects.length) {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content: '📋 No hay proyectos para eliminar.', components: [] });
+    } else {
+      await interaction.reply({ content: '📋 No hay proyectos para eliminar.', flags: 64 });
     }
+    return;
+  }
 
-  const select = new StringSelectMenuBuilder()
-    .setCustomId('wallet_remove_select')
-    .setPlaceholder('Selecciona un proyecto para eliminar')
-    .addOptions(options);
+  const { components, totalProjects, totalPages } = buildWalletRemoveSelectComponents(projects, page);
+  const summary = totalPages > 1 
+    ? `Selecciona el proyecto que deseas eliminar (${totalProjects} proyectos, página ${page + 1}/${totalPages}):`
+    : `Selecciona el proyecto que deseas eliminar (${totalProjects} proyectos):`;
 
-  await interaction.reply({
-    content: 'Selecciona el proyecto que deseas eliminar:',
-    components: [new ActionRowBuilder().addComponents(select)],
-    flags: 64
-  });
+  if (interaction.deferred || interaction.replied) {
+    await interaction.update({
+      content: summary,
+      components
+    });
+  } else {
+    await interaction.reply({
+      content: summary,
+      components,
+      flags: 64
+    });
+  }
 }
 
-async function showWalletEditSelect(interaction) {
-  const options = await getWalletProjectsForSelect(interaction.guildId);
+async function showWalletEditSelect(interaction, page = 0) {
+  const projects = await getWalletProjectsForSelect(interaction.guildId);
 
-  if (!options.length) {
-    await interaction.reply({ content: '📋 No hay proyectos para editar.', flags: 64 });
-      return;
+  if (!projects.length) {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content: '📋 No hay proyectos para editar.', components: [] });
+    } else {
+      await interaction.reply({ content: '📋 No hay proyectos para editar.', flags: 64 });
     }
+    return;
+  }
 
-  const select = new StringSelectMenuBuilder()
-    .setCustomId('wallet_edit_select')
-    .setPlaceholder('Selecciona un proyecto para editar')
-    .addOptions(options);
+  const { components, totalProjects, totalPages } = buildWalletEditSelectComponents(projects, page);
+  const summary = totalPages > 1 
+    ? `Selecciona el proyecto que deseas editar (${totalProjects} proyectos, página ${page + 1}/${totalPages}):`
+    : `Selecciona el proyecto que deseas editar (${totalProjects} proyectos):`;
 
-  await interaction.reply({
-    content: 'Selecciona el proyecto que deseas editar:',
-    components: [new ActionRowBuilder().addComponents(select)],
-    flags: 64
-  });
+  if (interaction.deferred || interaction.replied) {
+    await interaction.update({
+      content: summary,
+      components
+    });
+  } else {
+    await interaction.reply({
+      content: summary,
+      components,
+      flags: 64
+    });
+  }
 }
 
 async function showWalletAddChainSelector(interaction) {
@@ -7493,9 +7601,23 @@ async function handleWalletButton(interaction) {
     }
     
   if (customId === 'wallet_edit') {
-    await showWalletEditSelect(interaction);
+    await showWalletEditSelect(interaction, 0);
+    return;
+  }
+  
+  if (customId.startsWith('wallet_edit_page_')) {
+    const page = parseInt(customId.replace('wallet_edit_page_', ''), 10);
+    if (isNaN(page) || page < 0) {
+      try {
+        await interaction.update({ content: '❌ Página inválida.', components: [] });
+      } catch (err) {
+        await interaction.reply({ content: '❌ Página inválida.', flags: 64 });
+      }
       return;
     }
+    await showWalletEditSelect(interaction, page);
+    return;
+  }
     
   if (customId.startsWith('wallet_edit_project_')) {
     const projectId = customId.replace('wallet_edit_project_', '');
@@ -7514,9 +7636,23 @@ async function handleWalletButton(interaction) {
   }
 
   if (customId === 'wallet_remove') {
-    await showWalletRemoveSelect(interaction);
+    await showWalletRemoveSelect(interaction, 0);
+    return;
+  }
+  
+  if (customId.startsWith('wallet_remove_page_')) {
+    const page = parseInt(customId.replace('wallet_remove_page_', ''), 10);
+    if (isNaN(page) || page < 0) {
+      try {
+        await interaction.update({ content: '❌ Página inválida.', components: [] });
+      } catch (err) {
+        await interaction.reply({ content: '❌ Página inválida.', flags: 64 });
+      }
       return;
     }
+    await showWalletRemoveSelect(interaction, page);
+    return;
+  }
     
   if (customId === 'wallet_list') {
     await showWalletListChainSelector(interaction);
@@ -7643,7 +7779,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    if (interaction.customId === 'wallet_remove_select') {
+    if (interaction.customId === 'wallet_remove_select' || interaction.customId.startsWith('wallet_remove_select_page_')) {
       const projectId = interaction.values[0];
       const projectResult = await pool.query(
         'SELECT project_name, chain FROM wallet_projects WHERE id = $1',
@@ -7752,7 +7888,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    if (interaction.customId === 'wallet_edit_select') {
+    if (interaction.customId === 'wallet_edit_select' || interaction.customId.startsWith('wallet_edit_select_page_')) {
       const projectId = interaction.values[0];
       const projectResult = await pool.query('SELECT project_name, chain FROM wallet_projects WHERE id = $1', [projectId]);
 
