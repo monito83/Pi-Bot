@@ -5821,6 +5821,8 @@ async function updateWalletMessage(guildId) {
           const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
           console.log(`📌 Sending ${totalChunks - 1} additional chunks...`);
           
+          const sentMessages = [existingMessage]; // Store all sent messages for pinning in reverse order
+          
           for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
             const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
             const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
@@ -5841,14 +5843,7 @@ async function updateWalletMessage(guildId) {
               }
               const sentReply = await channel.send({ embeds: chunk });
               console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
-              
-              // Pin the follow-up message automatically
-              try {
-                await sentReply.pin();
-                console.log(`📌 Chunk ${chunkNumber} pinned successfully`);
-              } catch (pinError) {
-                console.warn(`⚠️ Could not pin chunk ${chunkNumber}:`, pinError.message);
-              }
+              sentMessages.push(sentReply);
               
               // Verify message was actually sent
               const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
@@ -5863,7 +5858,25 @@ async function updateWalletMessage(guildId) {
             }
           }
           
-          console.log(`📌 Finished sending all chunks for pinned message`);
+          // Pin all messages in reverse order so they appear in correct order (Discord orders pins by pin time)
+          console.log(`📌 Pinning ${sentMessages.length} messages in reverse order...`);
+          for (let i = sentMessages.length - 1; i >= 0; i--) {
+            const msg = sentMessages[i];
+            try {
+              if (!msg.pinned) {
+                await msg.pin();
+                console.log(`📌 Message ${i + 1}/${sentMessages.length} pinned successfully`);
+                // Small delay between pins to avoid rate limiting
+                if (i > 0) {
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                }
+              }
+            } catch (pinError) {
+              console.warn(`⚠️ Could not pin message ${i + 1}/${sentMessages.length}:`, pinError.message);
+            }
+          }
+          
+          console.log(`📌 Finished sending and pinning all chunks for pinned message`);
         }
         return;
     } catch (error) {
@@ -5886,6 +5899,8 @@ async function updateWalletMessage(guildId) {
       const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
       console.log(`📌 Sending ${totalChunks - 1} additional chunks for new pinned message...`);
       
+      const sentMessages = [sentMessage]; // Store all sent messages for pinning in reverse order
+      
       for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
         const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
         const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
@@ -5906,14 +5921,7 @@ async function updateWalletMessage(guildId) {
           }
           const sentReply = await channel.send({ embeds: chunk });
           console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
-          
-          // Pin the follow-up message automatically
-          try {
-            await sentReply.pin();
-            console.log(`📌 Chunk ${chunkNumber} pinned successfully`);
-          } catch (pinError) {
-            console.warn(`⚠️ Could not pin chunk ${chunkNumber}:`, pinError.message);
-          }
+          sentMessages.push(sentReply);
           
           // Verify message was actually sent
           const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
@@ -5928,7 +5936,25 @@ async function updateWalletMessage(guildId) {
         }
       }
       
-      console.log(`📌 Finished sending all chunks for new pinned message`);
+      // Pin all messages in reverse order so they appear in correct order (Discord orders pins by pin time)
+      console.log(`📌 Pinning ${sentMessages.length} messages in reverse order...`);
+      for (let i = sentMessages.length - 1; i >= 0; i--) {
+        const msg = sentMessages[i];
+        try {
+          if (!msg.pinned) {
+            await msg.pin();
+            console.log(`📌 Message ${i + 1}/${sentMessages.length} pinned successfully`);
+            // Small delay between pins to avoid rate limiting
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 300));
+            }
+          }
+        } catch (pinError) {
+          console.warn(`⚠️ Could not pin message ${i + 1}/${sentMessages.length}:`, pinError.message);
+        }
+      }
+      
+      console.log(`📌 Finished sending and pinning all chunks for new pinned message`);
     }
   } catch (error) {
     console.error('Error updating wallet message:', error);
