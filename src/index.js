@@ -5931,6 +5931,8 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
 
     return [header, ...channelLines].join('\n');
   });
+  
+  console.log(`🔨 buildWalletEmbeds: Created ${blocks.length} blocks from ${totalProjects} projects`);
 
   // Discord embed total limit is 6000 characters (includes title, description, footer, etc.)
   // We limit description to 1800 to leave room for title (~100), footer (~100), and overhead (~400)
@@ -6079,6 +6081,7 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
           }
         } else {
           // Double-check validation before adding
+          console.log(`🔨 buildWalletEmbeds: Adding embed ${embeds.length + 1} with ${currentBlocks.length} project blocks`);
           embeds.push(embed);
           currentBlocks = [block];
           currentLength = block.length;
@@ -6232,7 +6235,16 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
     }
   });
 
-  console.log(`🔨 buildWalletEmbeds: Returning ${validatedEmbeds.length} validated embeds from ${totalProjects} projects`);
+  // Update all embed titles with correct totalPages after all embeds are created
+  const finalTotalPages = validatedEmbeds.length;
+  validatedEmbeds.forEach((embed, index) => {
+    const finalTitle = finalTotalPages > 1
+      ? `📋 Proyectos con submit de wallets (${index + 1}/${finalTotalPages})`
+      : '📋 Proyectos con submit de wallets';
+    embed.setTitle(finalTitle);
+  });
+  
+  console.log(`🔨 buildWalletEmbeds: Returning ${validatedEmbeds.length} validated embeds from ${totalProjects} projects (${finalTotalPages} pages)`);
   return validatedEmbeds;
 }
 
