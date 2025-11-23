@@ -5793,6 +5793,8 @@ async function updateWalletMessage(guildId) {
     
     embeds = finalValidatedEmbeds;
     
+    console.log(`📌 updateWalletMessage: Generated ${embeds.length} embeds for pinned message`);
+    
     // Use same conservative chunking as sendWalletListEmbed
     const SAFE_EMBEDS_PER_MESSAGE = 3; // Very conservative: max 3 embeds per message
     const firstChunk = embeds.slice(0, SAFE_EMBEDS_PER_MESSAGE);
@@ -5807,6 +5809,8 @@ async function updateWalletMessage(guildId) {
           await existingMessage.pin().catch(() => {});
         }
         
+        console.log(`📌 Updated pinned message with ${firstChunk.length} embeds (chunk 1/${Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE)})`);
+        
         // Delete old follow-up messages and send new ones
         // Get replies to the pinned message
         const replies = await channel.messages.fetch({ limit: 50 }).catch(() => ({ messages: new Map() }));
@@ -5817,6 +5821,8 @@ async function updateWalletMessage(guildId) {
           }
         }
         
+        console.log(`📌 Deleting ${repliesToDelete.length} old follow-up messages`);
+        
         // Delete old replies
         for (const msg of repliesToDelete) {
           await msg.delete().catch(() => {});
@@ -5824,12 +5830,24 @@ async function updateWalletMessage(guildId) {
         
         // Send remaining embeds as follow-up messages
         if (embeds.length > SAFE_EMBEDS_PER_MESSAGE) {
+          const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
+          console.log(`📌 Sending ${totalChunks - 1} additional chunks...`);
+          
           for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
             const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
-            await existingMessage.reply({ embeds: chunk }).catch(err => {
-              console.warn('Error sending additional wallet list chunk in pinned message:', err.message);
-            });
+            const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
+            console.log(`📌 Sending chunk ${chunkNumber}/${totalChunks} with ${chunk.length} embeds...`);
+            
+            try {
+              await existingMessage.reply({ embeds: chunk });
+              console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully`);
+            } catch (err) {
+              console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
+              // Continue with next chunk even if one fails
+            }
           }
+          
+          console.log(`📌 Finished sending all chunks for pinned message`);
         }
         return;
     } catch (error) {
@@ -5839,6 +5857,7 @@ async function updateWalletMessage(guildId) {
     }
         
     // Create new message
+    console.log(`📌 Creating new pinned message with ${firstChunk.length} embeds (chunk 1/${Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE)})`);
     const sentMessage = await channel.send({ embeds: firstChunk });
     await pool.query(
       'UPDATE server_config SET wallet_message_id = $1, updated_at = NOW() WHERE guild_id = $2',
@@ -5848,12 +5867,24 @@ async function updateWalletMessage(guildId) {
     
     // Send additional embeds as follow-up messages if needed
     if (embeds.length > SAFE_EMBEDS_PER_MESSAGE) {
+      const totalChunks = Math.ceil(embeds.length / SAFE_EMBEDS_PER_MESSAGE);
+      console.log(`📌 Sending ${totalChunks - 1} additional chunks for new pinned message...`);
+      
       for (let i = SAFE_EMBEDS_PER_MESSAGE; i < embeds.length; i += SAFE_EMBEDS_PER_MESSAGE) {
         const chunk = embeds.slice(i, i + SAFE_EMBEDS_PER_MESSAGE);
-        await sentMessage.reply({ embeds: chunk }).catch(err => {
-          console.warn('Error sending additional wallet list chunk:', err.message);
-        });
+        const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
+        console.log(`📌 Sending chunk ${chunkNumber}/${totalChunks} with ${chunk.length} embeds...`);
+        
+        try {
+          await sentMessage.reply({ embeds: chunk });
+          console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully`);
+        } catch (err) {
+          console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
+          // Continue with next chunk even if one fails
+        }
       }
+      
+      console.log(`📌 Finished sending all chunks for new pinned message`);
     }
   } catch (error) {
     console.error('Error updating wallet message:', error);
@@ -5864,6 +5895,8 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
   const totalProjects = projects?.length || 0;
   const filterLabel = chainFilterKey ? (chainFilterName || chainFilterKey) : null;
   const embeds = [];
+  
+  console.log(`🔨 buildWalletEmbeds: Processing ${totalProjects} projects${filterLabel ? ` (filter: ${filterLabel})` : ''}`);
 
   const createBaseEmbed = () =>
     new EmbedBuilder()
@@ -6199,6 +6232,7 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
     }
   });
 
+  console.log(`🔨 buildWalletEmbeds: Returning ${validatedEmbeds.length} validated embeds from ${totalProjects} projects`);
   return validatedEmbeds;
 }
 
