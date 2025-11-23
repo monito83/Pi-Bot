@@ -5795,6 +5795,12 @@ async function updateWalletMessage(guildId) {
     
     console.log(`📌 updateWalletMessage: Generated ${embeds.length} embeds for pinned message`);
     
+    // Verify titles are correct before sending
+    embeds.forEach((embed, index) => {
+      const title = embed.data.title || 'No title';
+      console.log(`📌 updateWalletMessage: Embed ${index + 1}/${embeds.length} title: "${title}"`);
+    });
+    
     // Use same conservative chunking as sendWalletListEmbed
     const SAFE_EMBEDS_PER_MESSAGE = 3; // Very conservative: max 3 embeds per message
     const firstChunk = embeds.slice(0, SAFE_EMBEDS_PER_MESSAGE);
@@ -6237,15 +6243,31 @@ function buildWalletEmbeds(projects, { chainFilterKey = null, chainFilterName = 
 
   // Update all embed titles with correct totalPages after all embeds are created
   const finalTotalPages = validatedEmbeds.length;
-  validatedEmbeds.forEach((embed, index) => {
+  console.log(`🔨 buildWalletEmbeds: Updating titles for ${finalTotalPages} embeds...`);
+  
+  // Create new embeds with correct titles to ensure they're properly updated
+  const finalEmbeds = validatedEmbeds.map((embed, index) => {
+    const embedData = embed.data;
     const finalTitle = finalTotalPages > 1
       ? `📋 Proyectos con submit de wallets (${index + 1}/${finalTotalPages})`
       : '📋 Proyectos con submit de wallets';
-    embed.setTitle(finalTitle);
+    
+    const oldTitle = embedData.title || 'No title';
+    console.log(`🔨 buildWalletEmbeds: Embed ${index + 1}/${finalTotalPages} title: "${oldTitle}" -> "${finalTitle}"`);
+    
+    // Create a new embed with the correct title to ensure it's properly set
+    const newEmbed = new EmbedBuilder()
+      .setTitle(finalTitle)
+      .setDescription(embedData.description || '')
+      .setFooter(embedData.footer ? { text: embedData.footer.text } : null)
+      .setColor(embedData.color || 0x3B82F6)
+      .setTimestamp(embedData.timestamp ? new Date(embedData.timestamp) : new Date());
+    
+    return newEmbed;
   });
   
-  console.log(`🔨 buildWalletEmbeds: Returning ${validatedEmbeds.length} validated embeds from ${totalProjects} projects (${finalTotalPages} pages)`);
-  return validatedEmbeds;
+  console.log(`🔨 buildWalletEmbeds: Returning ${finalEmbeds.length} validated embeds from ${totalProjects} projects (${finalTotalPages} pages)`);
+  return finalEmbeds;
 }
 
 function escapeMarkdown(text = '') {
