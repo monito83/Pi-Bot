@@ -4902,29 +4902,26 @@ async function handleWalletAdd(interaction) {
 }
 
 async function handleWalletList(interaction) {
-  let deferred = false;
-  
-  // Always defer if not already acknowledged
+  // Always defer first to ensure we can use editReply later
   if (!interaction.deferred && !interaction.replied) {
     try {
       await interaction.deferReply({ flags: 64 });
-      deferred = true;
   } catch (error) {
       if (error.code === 40060 || error.code === 10062) {
         // Already acknowledged, continue
-        deferred = true;
+        console.log('handleWalletList: Interaction already acknowledged, continuing...');
       } else {
         console.error('Error deferring in handleWalletList:', error);
         try {
-          await interaction.reply({ content: '❌ Error al procesar la solicitud.', flags: 64 });
+          if (!interaction.replied) {
+            await interaction.reply({ content: '❌ Error al procesar la solicitud.', flags: 64 });
+          }
         } catch (replyError) {
           console.error('Error replying in handleWalletList:', replyError);
         }
         return;
       }
     }
-  } else {
-    deferred = true;
   }
 
   try {
@@ -4941,8 +4938,11 @@ async function handleWalletList(interaction) {
     const projects = await getWalletProjectsWithChannels(interaction.guildId, chainFilterKey);
     const embeds = buildWalletEmbeds(projects, { chainFilterKey, chainFilterName });
 
-    if (!deferred) {
-      // If somehow not deferred, reply directly
+    // Check interaction state before replying
+    const isAcknowledged = interaction.deferred || interaction.replied;
+    
+    if (!isAcknowledged) {
+      // If somehow not acknowledged, reply directly
       if (embeds.length <= 10) {
         await interaction.reply({ embeds, flags: 64 });
     } else {
@@ -4953,7 +4953,7 @@ async function handleWalletList(interaction) {
         }
       }
     } else {
-      // Normal flow with editReply
+      // Normal flow with editReply (interaction is deferred)
       if (embeds.length <= 10) {
         await interaction.editReply({ embeds });
       } else {
@@ -4967,18 +4967,15 @@ async function handleWalletList(interaction) {
   } catch (error) {
     console.error('Error in handleWalletList:', error);
     try {
-      if (error.message === 'CHAIN_NOT_FOUND') {
-        if (deferred || interaction.deferred || interaction.replied) {
-          await interaction.editReply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.' });
-        } else {
-          await interaction.reply({ content: '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.', flags: 64 });
-        }
+      const isAcknowledged = interaction.deferred || interaction.replied;
+      const errorMessage = error.message === 'CHAIN_NOT_FOUND'
+        ? '❌ La red seleccionada no existe. Usa `/wallet chain_add` para crearla.'
+        : '❌ No se pudo obtener la lista de proyectos.';
+      
+      if (isAcknowledged) {
+        await interaction.editReply({ content: errorMessage });
       } else {
-        if (deferred || interaction.deferred || interaction.replied) {
-          await interaction.editReply({ content: '❌ No se pudo obtener la lista de proyectos.' });
-        } else {
-          await interaction.reply({ content: '❌ No se pudo obtener la lista de proyectos.', flags: 64 });
-        }
+        await interaction.reply({ content: errorMessage, flags: 64 });
       }
     } catch (replyError) {
       console.error('Error sending error message in handleWalletList:', replyError);
@@ -5710,8 +5707,8 @@ async function updateWalletMessage(guildId) {
     
     if (!channel || !channel.isTextBased()) {
       console.warn(`Wallet channel not accessible for guild ${guildId}`);
-      return;
-    }
+          return;
+        }
         
     const projects = await getWalletProjectsWithChannels(guildId);
     let embeds = buildWalletEmbeds(projects, {});
