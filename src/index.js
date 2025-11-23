@@ -5844,9 +5844,17 @@ async function updateWalletMessage(guildId) {
             const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
             console.log(`📌 Sending chunk ${chunkNumber}/${totalChunks} with ${chunk.length} embeds...`);
             
+            // Verify embed titles before sending
+            chunk.forEach((embed, idx) => {
+              const title = embed.data.title || 'No title';
+              const globalIndex = i + idx;
+              console.log(`📌   Chunk ${chunkNumber} embed ${idx + 1}: "${title}" (global index: ${globalIndex + 1}/${embeds.length})`);
+            });
+            
             try {
-              await existingMessage.reply({ embeds: chunk });
-              console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully`);
+              // Use send() instead of reply() to ensure message is visible
+              const sentReply = await channel.send({ embeds: chunk });
+              console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
             } catch (err) {
               console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
               // Continue with next chunk even if one fails
@@ -5881,9 +5889,17 @@ async function updateWalletMessage(guildId) {
         const chunkNumber = Math.floor(i / SAFE_EMBEDS_PER_MESSAGE) + 1;
         console.log(`📌 Sending chunk ${chunkNumber}/${totalChunks} with ${chunk.length} embeds...`);
         
+        // Verify embed titles before sending
+        chunk.forEach((embed, idx) => {
+          const title = embed.data.title || 'No title';
+          const globalIndex = i + idx;
+          console.log(`📌   Chunk ${chunkNumber} embed ${idx + 1}: "${title}" (global index: ${globalIndex + 1}/${embeds.length})`);
+        });
+        
         try {
-          await sentMessage.reply({ embeds: chunk });
-          console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully`);
+          // Use send() instead of reply() to ensure message is visible
+          const sentReply = await channel.send({ embeds: chunk });
+          console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
         } catch (err) {
           console.error(`❌ Error sending chunk ${chunkNumber}/${totalChunks}:`, err.message);
           // Continue with next chunk even if one fails
