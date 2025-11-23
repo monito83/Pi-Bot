@@ -4938,30 +4938,15 @@ async function handleWalletList(interaction) {
     const projects = await getWalletProjectsWithChannels(interaction.guildId, chainFilterKey);
     const embeds = buildWalletEmbeds(projects, { chainFilterKey, chainFilterName });
 
-    // Check interaction state before replying
-    const isAcknowledged = interaction.deferred || interaction.replied;
-    
-    if (!isAcknowledged) {
-      // If somehow not acknowledged, reply directly
-      if (embeds.length <= 10) {
-        await interaction.reply({ embeds, flags: 64 });
+    // Always use editReply since we deferred at the start
+    // The interaction should always be deferred at this point
+    if (embeds.length <= 10) {
+      await interaction.editReply({ embeds });
     } else {
-        await interaction.reply({ embeds: embeds.slice(0, 10), flags: 64 });
-        for (let i = 10; i < embeds.length; i += 10) {
-          const chunk = embeds.slice(i, i + 10);
-          await interaction.followUp({ embeds: chunk, flags: 64 });
-        }
-      }
-    } else {
-      // Normal flow with editReply (interaction is deferred)
-      if (embeds.length <= 10) {
-        await interaction.editReply({ embeds });
-      } else {
-        await interaction.editReply({ embeds: embeds.slice(0, 10) });
-        for (let i = 10; i < embeds.length; i += 10) {
-          const chunk = embeds.slice(i, i + 10);
-          await interaction.followUp({ embeds: chunk, flags: 64 });
-        }
+      await interaction.editReply({ embeds: embeds.slice(0, 10) });
+      for (let i = 10; i < embeds.length; i += 10) {
+        const chunk = embeds.slice(i, i + 10);
+        await interaction.followUp({ embeds: chunk, flags: 64 });
       }
     }
   } catch (error) {
@@ -5857,6 +5842,14 @@ async function updateWalletMessage(guildId) {
               const sentReply = await channel.send({ embeds: chunk });
               console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
               
+              // Pin the follow-up message automatically
+              try {
+                await sentReply.pin();
+                console.log(`📌 Chunk ${chunkNumber} pinned successfully`);
+              } catch (pinError) {
+                console.warn(`⚠️ Could not pin chunk ${chunkNumber}:`, pinError.message);
+              }
+              
               // Verify message was actually sent
               const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
               if (verifyMsg) {
@@ -5913,6 +5906,14 @@ async function updateWalletMessage(guildId) {
           }
           const sentReply = await channel.send({ embeds: chunk });
           console.log(`✅ Chunk ${chunkNumber}/${totalChunks} sent successfully (message ID: ${sentReply.id})`);
+          
+          // Pin the follow-up message automatically
+          try {
+            await sentReply.pin();
+            console.log(`📌 Chunk ${chunkNumber} pinned successfully`);
+          } catch (pinError) {
+            console.warn(`⚠️ Could not pin chunk ${chunkNumber}:`, pinError.message);
+          }
           
           // Verify message was actually sent
           const verifyMsg = await channel.messages.fetch(sentReply.id).catch(() => null);
