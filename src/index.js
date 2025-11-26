@@ -4348,13 +4348,6 @@ async function createWalletChain(guildId, displayName, keyInput) {
 }
 
 async function handleCalendarCommand(interaction) {
-  // Check interaction state at the start
-  if (interaction.replied || interaction.deferred) {
-    console.log(`⚠️ Calendar command: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
-    // Don't try to handle if already acknowledged
-    return;
-  }
-
   let subcommand = 'hoy';
   try {
     subcommand = interaction.options.getSubcommand();
@@ -4378,19 +4371,35 @@ async function handleCalendarCommand(interaction) {
 
   const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
 
-  // Defer reply only if not already replied/deferred
+  // Try to defer immediately - don't check state first to avoid race conditions
   let wasDeferred = false;
   try {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    wasDeferred = true;
-  } catch (error) {
-    // If already acknowledged, the interaction was already handled
-    if (error.code === 40060 || error.code === 10062) {
-      console.log('⚠️ Calendar interaction already acknowledged during defer, skipping response');
-      return;
+    // Only try to defer if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
+    } else {
+      wasDeferred = interaction.deferred;
     }
-    console.error('Error deferring calendar reply:', error);
-    // If defer fails for other reasons, try to continue without deferring
+  } catch (error) {
+    // If already acknowledged, check if we can still respond
+    if (error.code === 40060 || error.code === 10062) {
+      console.log(`⚠️ Calendar interaction already acknowledged during defer (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+      // If it's already replied, we can't do anything
+      if (interaction.replied) {
+        return;
+      }
+      // If it's deferred but not replied, we can still edit
+      if (interaction.deferred) {
+        wasDeferred = true;
+      } else {
+        // Something else happened, try to continue
+        console.log('⚠️ Calendar: interaction state unclear, attempting to continue');
+      }
+    } else {
+      console.error('Error deferring calendar reply:', error);
+      // If defer fails for other reasons, try to continue without deferring
+    }
   }
 
   await respondCalendarRange(interaction, rangeKey, wasDeferred);
@@ -4509,19 +4518,15 @@ async function respondCalendarRange(interaction, rangeKey, wasDeferred = null) {
 }
 
 async function handleCalendarChannelSet(interaction) {
-  // Check interaction state at the start
-  if (interaction.replied || interaction.deferred) {
-    console.log(`⚠️ Calendar channel_set: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
-    return;
-  }
-
   const channel = interaction.options.getChannel('channel');
   const guildId = interaction.guildId;
 
   // Check channel validity first (before deferring)
   if (!channel || !channel.isTextBased()) {
     try {
-      await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', flags: MessageFlags.Ephemeral });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', flags: MessageFlags.Ephemeral });
+      }
     } catch (error) {
       console.error('Error replying with channel validation error:', error);
     }
@@ -4530,26 +4535,44 @@ async function handleCalendarChannelSet(interaction) {
 
   if (channel.guildId && channel.guildId !== guildId) {
     try {
-      await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', flags: MessageFlags.Ephemeral });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', flags: MessageFlags.Ephemeral });
+      }
     } catch (error) {
       console.error('Error replying with guild validation error:', error);
     }
     return;
   }
 
-  // Defer reply
+  // Try to defer immediately
   let wasDeferred = false;
   try {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    wasDeferred = true;
-  } catch (error) {
-    // If already acknowledged, the interaction was already handled
-    if (error.code === 40060 || error.code === 10062) {
-      console.log('⚠️ Calendar channel_set interaction already acknowledged during defer, skipping response');
-      return;
+    // Only try to defer if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
+    } else {
+      wasDeferred = interaction.deferred;
     }
-    console.error('Error deferring calendar channel_set reply:', error);
-    // If defer fails for other reasons, try to continue without deferring
+  } catch (error) {
+    // If already acknowledged, check if we can still respond
+    if (error.code === 40060 || error.code === 10062) {
+      console.log(`⚠️ Calendar channel_set: interaction already acknowledged during defer (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+      // If it's already replied, we can't do anything
+      if (interaction.replied) {
+      return;
+      }
+      // If it's deferred but not replied, we can still edit
+      if (interaction.deferred) {
+        wasDeferred = true;
+      } else {
+        // Something else happened, try to continue
+        console.log('⚠️ Calendar channel_set: interaction state unclear, attempting to continue');
+      }
+    } else {
+      console.error('Error deferring calendar channel_set reply:', error);
+      // If defer fails for other reasons, try to continue without deferring
+    }
   }
 
   try {
@@ -4612,27 +4635,37 @@ async function handleCalendarChannelSet(interaction) {
 }
 
 async function handleCalendarChannelClear(interaction) {
-  // Check interaction state at the start
-  if (interaction.replied || interaction.deferred) {
-    console.log(`⚠️ Calendar channel_clear: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
-    return;
-  }
-
   const guildId = interaction.guildId;
 
-  // Defer reply
+  // Try to defer immediately
   let wasDeferred = false;
   try {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    wasDeferred = true;
-  } catch (error) {
-    // If already acknowledged, the interaction was already handled
-    if (error.code === 40060 || error.code === 10062) {
-      console.log('⚠️ Calendar channel_clear interaction already acknowledged during defer, skipping response');
-      return;
+    // Only try to defer if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
+    } else {
+      wasDeferred = interaction.deferred;
     }
-    console.error('Error deferring calendar channel_clear reply:', error);
-    // If defer fails for other reasons, try to continue without deferring
+  } catch (error) {
+    // If already acknowledged, check if we can still respond
+    if (error.code === 40060 || error.code === 10062) {
+      console.log(`⚠️ Calendar channel_clear: interaction already acknowledged during defer (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+      // If it's already replied, we can't do anything
+      if (interaction.replied) {
+      return;
+      }
+      // If it's deferred but not replied, we can still edit
+      if (interaction.deferred) {
+        wasDeferred = true;
+      } else {
+        // Something else happened, try to continue
+        console.log('⚠️ Calendar channel_clear: interaction state unclear, attempting to continue');
+      }
+    } else {
+      console.error('Error deferring calendar channel_clear reply:', error);
+      // If defer fails for other reasons, try to continue without deferring
+    }
   }
 
   try {
@@ -4699,7 +4732,7 @@ function buildCalendarEmbed(rangeKey, events) {
   const rangeConfig = CALENDAR_RANGES[rangeKey] || CALENDAR_RANGES.hoy;
   const emoji = rangeConfig.emoji || '🗓️';
 
-  const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
     .setTitle(`${emoji} Calendario Monad — ${rangeConfig.label}`)
     .setColor(0xF97316)
     .setTimestamp(new Date())
@@ -6131,7 +6164,7 @@ async function updateWalletMessage(guildId) {
     }
     
     console.log(`📌 Finished sending and pinning all chunks for new pinned message`);
-  } catch (error) {
+    } catch (error) {
     console.error('Error updating wallet message:', error);
   }
 }
@@ -6517,7 +6550,7 @@ function isValidUrl(value) {
   try {
     const url = new URL(value);
     return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch (error) {
+  } catch (error) {
     return false;
   }
 }
@@ -6919,7 +6952,7 @@ async function handleMainMenuButton(interaction) {
       await showLegacyMainMenu(interaction);
       return;
     }
-
+    
     if (customId === 'menu_main_twitter') {
       await showTwitterTrackerMenu(interaction);
       return;
@@ -6929,12 +6962,12 @@ async function handleMainMenuButton(interaction) {
       await showCalendarMenu(interaction);
       return;
     }
-
+    
     if (customId === 'menu_main_wallet') {
       await showWalletMenu(interaction);
       return;
     }
-
+    
     if (customId === 'menu_main_test') {
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({ content: '✅ Botón de prueba recibido.', ephemeral: true });
@@ -7434,9 +7467,9 @@ async function showWalletRemoveSelect(interaction, page = 0) {
     } else {
       await interaction.reply({ content: '📋 No hay proyectos para eliminar.', flags: 64 });
     }
-    return;
-  }
-
+      return;
+    }
+    
   const { components, totalProjects, totalPages } = buildWalletRemoveSelectComponents(projects, page);
   const summary = totalPages > 1 
     ? `Selecciona el proyecto que deseas eliminar (${totalProjects} proyectos, página ${page + 1}/${totalPages}):`
@@ -7465,9 +7498,9 @@ async function showWalletEditSelect(interaction, page = 0) {
     } else {
       await interaction.reply({ content: '📋 No hay proyectos para editar.', flags: 64 });
     }
-    return;
-  }
-
+      return;
+    }
+    
   const { components, totalProjects, totalPages } = buildWalletEditSelectComponents(projects, page);
   const summary = totalPages > 1 
     ? `Selecciona el proyecto que deseas editar (${totalProjects} proyectos, página ${page + 1}/${totalPages}):`
@@ -7735,14 +7768,14 @@ async function sendWalletListEmbed(interaction, { chainKey = null, chainName = n
     } else {
       await interaction.reply({ content: null, embeds, components: [], flags: 64 });
     }
-    return;
-  }
+      return;
+    }
 
   for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
     const chunk = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
     try {
       await interaction.followUp({ embeds: chunk, flags: 64 });
-    } catch (error) {
+  } catch (error) {
       if (error?.code === 40060 || error?.code === 10062) {
         console.warn('wallet_list followUp ignored (interaction already acknowledged).');
         break;
@@ -7825,7 +7858,7 @@ async function handleWalletButton(interaction) {
       await interaction.reply({ content: '❌ El proyecto seleccionado ya no existe.', ephemeral: true });
       return;
     }
-    
+
     await interaction.showModal(createWalletEditModal(projectResult.rows[0], projectId));
     return;
   }
@@ -7912,16 +7945,16 @@ client.on('interactionCreate', async interaction => {
       });
       return;
     }
-    
+
     if (interaction.customId.startsWith('wallet_add_project_select_')) {
       const match = interaction.customId.match(/^wallet_add_project_select_(.+)_(\d+)$/);
       const value = interaction.values[0];
-
+    
       if (!match || !value) {
         await interaction.update({ content: '❌ Selección inválida.', components: [] });
       return;
     }
-    
+
       const chainKey = match[1];
 
       if (value.startsWith('new:')) {
@@ -7931,8 +7964,8 @@ client.on('interactionCreate', async interaction => {
           return;
         }
         await interaction.showModal(createWalletAddModal(chainInfo));
-        return;
-      }
+      return;
+    }
 
       if (value.startsWith('project:')) {
         const projectId = value.replace('project:', '');
