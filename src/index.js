@@ -4372,18 +4372,25 @@ async function handleCalendarCommand(interaction) {
   const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
 
   // Defer reply only if not already replied/deferred
+  let wasDeferred = false;
   if (!interaction.replied && !interaction.deferred) {
     try {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
     } catch (error) {
-      // If already acknowledged, continue without deferring
-      if (error.code !== 40060 && error.code !== 10062) {
-        console.error('Error deferring calendar reply:', error);
+      // If already acknowledged, the interaction was already handled
+      if (error.code === 40060 || error.code === 10062) {
+        // Interaction already acknowledged, don't try to respond again
+        console.log('⚠️ Calendar interaction already acknowledged, skipping response');
+        return;
       }
+      console.error('Error deferring calendar reply:', error);
     }
+  } else {
+    wasDeferred = interaction.deferred;
   }
 
-  await respondCalendarRange(interaction, rangeKey);
+  await respondCalendarRange(interaction, rangeKey, wasDeferred);
 }
 
 async function handleCalendarButton(interaction) {
@@ -4397,17 +4404,23 @@ async function handleCalendarButton(interaction) {
   if (customId.startsWith('calendar_show_')) {
     const rangeKey = customId.replace('calendar_show_', '');
     // Defer reply only if not already replied/deferred
+    let wasDeferred = false;
     if (!interaction.replied && !interaction.deferred) {
       try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        wasDeferred = true;
       } catch (error) {
-        // If already acknowledged, continue without deferring
-        if (error.code !== 40060 && error.code !== 10062) {
-          console.error('Error deferring calendar button reply:', error);
+        // If already acknowledged, the interaction was already handled
+        if (error.code === 40060 || error.code === 10062) {
+          console.log('⚠️ Calendar button interaction already acknowledged, skipping response');
+          return;
         }
+        console.error('Error deferring calendar button reply:', error);
       }
+    } else {
+      wasDeferred = interaction.deferred;
     }
-    await respondCalendarRange(interaction, rangeKey);
+    await respondCalendarRange(interaction, rangeKey, wasDeferred);
     return;
   }
 
@@ -4419,29 +4432,40 @@ async function handleCalendarButton(interaction) {
   }
 }
 
-async function respondCalendarRange(interaction, rangeKey) {
+async function respondCalendarRange(interaction, rangeKey, wasDeferred = null) {
   const rangeConfig = CALENDAR_RANGES[rangeKey] || CALENDAR_RANGES.hoy;
+
+  // Determine if interaction was deferred (use parameter if provided, otherwise check state)
+  const isDeferred = wasDeferred !== null ? wasDeferred : (interaction.deferred && !interaction.replied);
 
   try {
     const events = await getCalendarEvents(rangeConfig.range);
     const embed = buildCalendarEmbed(rangeKey, events);
 
-    // Check interaction state more carefully
-    if (interaction.deferred && !interaction.replied) {
-      await interaction.editReply({ content: null, embeds: [embed], components: [] });
-    } else if (interaction.replied) {
-      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
-    } else if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-    } else {
-      // Fallback: try editReply if deferred, otherwise followUp
+    // Use editReply if deferred, otherwise use reply or followUp
+    if (isDeferred) {
       try {
         await interaction.editReply({ content: null, embeds: [embed], components: [] });
       } catch (editError) {
+        // If edit fails because not deferred, try followUp
         if (editError.code === 40060 || editError.code === 10062) {
           await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
         } else {
           throw editError;
+        }
+      }
+    } else if (interaction.replied) {
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    } else {
+      // Not deferred and not replied, use reply
+      try {
+        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        // If reply fails because already acknowledged, try followUp
+        if (replyError.code === 40060 || replyError.code === 10062) {
+          await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        } else {
+          throw replyError;
         }
       }
     }
@@ -4449,8 +4473,8 @@ async function respondCalendarRange(interaction, rangeKey) {
     console.error('Error obteniendo eventos del calendario:', error);
     const message = '❌ No se pudieron obtener los eventos. Verifica la configuración del calendario.';
 
-    // Check interaction state more carefully for error handling
-    if (interaction.deferred && !interaction.replied) {
+    // Handle error response based on interaction state
+    if (isDeferred) {
       try {
         await interaction.editReply({ content: message, embeds: [], components: [] });
       } catch (editError) {
@@ -4462,18 +4486,20 @@ async function respondCalendarRange(interaction, rangeKey) {
       } catch (followUpError) {
         console.error('Error following up with error message:', followUpError);
       }
-    } else if (!interaction.replied && !interaction.deferred) {
+    } else {
       try {
         await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
       } catch (replyError) {
-        console.error('Error replying with error message:', replyError);
-      }
-    } else {
-      // Last resort: try to send a follow-up
-      try {
-        await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
-      } catch (finalError) {
-        console.error('Error sending final error message:', finalError);
+        // If reply fails, try followUp as last resort
+        if (replyError.code === 40060 || replyError.code === 10062) {
+          try {
+            await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+          } catch (finalError) {
+            console.error('Error sending final error message:', finalError);
+          }
+        } else {
+          console.error('Error replying with error message:', replyError);
+        }
       }
     }
   }
@@ -4483,24 +4509,45 @@ async function handleCalendarChannelSet(interaction) {
   const channel = interaction.options.getChannel('channel');
   const guildId = interaction.guildId;
 
+  // Check channel validity first (before deferring)
   if (!channel || !channel.isTextBased()) {
-    await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', ephemeral: true });
-      return;
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', flags: MessageFlags.Ephemeral });
+      } catch (error) {
+        console.error('Error replying with channel validation error:', error);
+      }
     }
-
-  if (channel.guildId && channel.guildId !== guildId) {
-    await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', ephemeral: true });
     return;
   }
 
-  try {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ ephemeral: true });
+  if (channel.guildId && channel.guildId !== guildId) {
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', flags: MessageFlags.Ephemeral });
+      } catch (error) {
+        console.error('Error replying with guild validation error:', error);
+      }
     }
-  } catch (error) {
-    if (error.code !== 40060 && error.code !== 10062) {
-      throw error;
+    return;
+  }
+
+  // Defer reply only if not already replied/deferred
+  let wasDeferred = false;
+  if (!interaction.deferred && !interaction.replied) {
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
+    } catch (error) {
+      // If already acknowledged, the interaction was already handled
+      if (error.code === 40060 || error.code === 10062) {
+        console.log('⚠️ Calendar channel_set interaction already acknowledged, skipping response');
+        return;
+      }
+      console.error('Error deferring calendar channel_set reply:', error);
     }
+  } else {
+    wasDeferred = interaction.deferred;
   }
 
   try {
@@ -4514,22 +4561,50 @@ async function handleCalendarChannelSet(interaction) {
     );
 
     const message = { content: `✅ Canal de calendario configurado en <#${channel.id}>.` };
-    if (interaction.deferred) {
-      await interaction.editReply(message);
+    if (wasDeferred) {
+      try {
+        await interaction.editReply(message);
+      } catch (editError) {
+        if (editError.code === 40060 || editError.code === 10062) {
+          await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+        } else {
+          throw editError;
+        }
+      }
     } else if (interaction.replied) {
-      await interaction.followUp({ ...message, ephemeral: true });
+      await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
     } else {
-      await interaction.reply({ ...message, ephemeral: true });
+      try {
+        await interaction.reply({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        if (replyError.code === 40060 || replyError.code === 10062) {
+          await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+        } else {
+          throw replyError;
+        }
+      }
     }
   } catch (error) {
     console.error('Error configurando canal de calendario:', error);
     const message = { content: '❌ No se pudo configurar el canal del calendario.' };
-    if (interaction.deferred) {
-      await interaction.editReply(message);
+    if (wasDeferred) {
+      try {
+        await interaction.editReply(message);
+      } catch (editError) {
+        console.error('Error editing reply with error message:', editError);
+      }
     } else if (interaction.replied) {
-      await interaction.followUp({ ...message, ephemeral: true });
+      try {
+        await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (followUpError) {
+        console.error('Error following up with error message:', followUpError);
+      }
     } else {
-      await interaction.reply({ ...message, ephemeral: true });
+      try {
+        await interaction.reply({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        console.error('Error replying with error message:', replyError);
+      }
     }
   }
 }
@@ -4537,14 +4612,22 @@ async function handleCalendarChannelSet(interaction) {
 async function handleCalendarChannelClear(interaction) {
   const guildId = interaction.guildId;
 
-  try {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply({ ephemeral: true });
+  // Defer reply only if not already replied/deferred
+  let wasDeferred = false;
+  if (!interaction.deferred && !interaction.replied) {
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      wasDeferred = true;
+    } catch (error) {
+      // If already acknowledged, the interaction was already handled
+      if (error.code === 40060 || error.code === 10062) {
+        console.log('⚠️ Calendar channel_clear interaction already acknowledged, skipping response');
+        return;
+      }
+      console.error('Error deferring calendar channel_clear reply:', error);
     }
-  } catch (error) {
-    if (error.code !== 40060 && error.code !== 10062) {
-      throw error;
-    }
+  } else {
+    wasDeferred = interaction.deferred;
   }
 
   try {
@@ -4559,22 +4642,50 @@ async function handleCalendarChannelClear(interaction) {
     );
 
     const message = { content: '✅ Canal de calendario eliminado.' };
-    if (interaction.deferred) {
-      await interaction.editReply(message);
+    if (wasDeferred) {
+      try {
+        await interaction.editReply(message);
+      } catch (editError) {
+        if (editError.code === 40060 || editError.code === 10062) {
+          await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+        } else {
+          throw editError;
+        }
+      }
     } else if (interaction.replied) {
-      await interaction.followUp({ ...message, ephemeral: true });
+      await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
     } else {
-      await interaction.reply({ ...message, ephemeral: true });
+      try {
+        await interaction.reply({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        if (replyError.code === 40060 || replyError.code === 10062) {
+          await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+        } else {
+          throw replyError;
+        }
+      }
     }
   } catch (error) {
     console.error('Error limpiando canal de calendario:', error);
     const message = { content: '❌ No se pudo limpiar el canal del calendario.' };
-    if (interaction.deferred) {
-      await interaction.editReply(message);
+    if (wasDeferred) {
+      try {
+        await interaction.editReply(message);
+      } catch (editError) {
+        console.error('Error editing reply with error message:', editError);
+      }
     } else if (interaction.replied) {
-      await interaction.followUp({ ...message, ephemeral: true });
+      try {
+        await interaction.followUp({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (followUpError) {
+        console.error('Error following up with error message:', followUpError);
+      }
     } else {
-      await interaction.reply({ ...message, ephemeral: true });
+      try {
+        await interaction.reply({ ...message, flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        console.error('Error replying with error message:', replyError);
+      }
     }
   }
 }
