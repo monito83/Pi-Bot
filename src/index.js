@@ -1960,7 +1960,7 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
-  console.log(`⚙️ Received slash command: ${commandName}`);
+  console.log(`⚙️ Received slash command: ${commandName} (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
 
   try {
     switch (commandName) {
@@ -4348,6 +4348,13 @@ async function createWalletChain(guildId, displayName, keyInput) {
 }
 
 async function handleCalendarCommand(interaction) {
+  // Check interaction state at the start
+  if (interaction.replied || interaction.deferred) {
+    console.log(`⚠️ Calendar command: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+    // Don't try to handle if already acknowledged
+    return;
+  }
+
   let subcommand = 'hoy';
   try {
     subcommand = interaction.options.getSubcommand();
@@ -4373,21 +4380,17 @@ async function handleCalendarCommand(interaction) {
 
   // Defer reply only if not already replied/deferred
   let wasDeferred = false;
-  if (!interaction.replied && !interaction.deferred) {
-    try {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      wasDeferred = true;
-    } catch (error) {
-      // If already acknowledged, the interaction was already handled
-      if (error.code === 40060 || error.code === 10062) {
-        // Interaction already acknowledged, don't try to respond again
-        console.log('⚠️ Calendar interaction already acknowledged, skipping response');
-        return;
-      }
-      console.error('Error deferring calendar reply:', error);
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    wasDeferred = true;
+  } catch (error) {
+    // If already acknowledged, the interaction was already handled
+    if (error.code === 40060 || error.code === 10062) {
+      console.log('⚠️ Calendar interaction already acknowledged during defer, skipping response');
+      return;
     }
-  } else {
-    wasDeferred = interaction.deferred;
+    console.error('Error deferring calendar reply:', error);
+    // If defer fails for other reasons, try to continue without deferring
   }
 
   await respondCalendarRange(interaction, rangeKey, wasDeferred);
@@ -4506,48 +4509,47 @@ async function respondCalendarRange(interaction, rangeKey, wasDeferred = null) {
 }
 
 async function handleCalendarChannelSet(interaction) {
+  // Check interaction state at the start
+  if (interaction.replied || interaction.deferred) {
+    console.log(`⚠️ Calendar channel_set: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+    return;
+  }
+
   const channel = interaction.options.getChannel('channel');
   const guildId = interaction.guildId;
 
   // Check channel validity first (before deferring)
   if (!channel || !channel.isTextBased()) {
-    if (!interaction.replied && !interaction.deferred) {
-      try {
-        await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', flags: MessageFlags.Ephemeral });
-      } catch (error) {
-        console.error('Error replying with channel validation error:', error);
-      }
+    try {
+      await interaction.reply({ content: '❌ Debes seleccionar un canal de texto válido.', flags: MessageFlags.Ephemeral });
+    } catch (error) {
+      console.error('Error replying with channel validation error:', error);
     }
     return;
   }
 
   if (channel.guildId && channel.guildId !== guildId) {
-    if (!interaction.replied && !interaction.deferred) {
-      try {
-        await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', flags: MessageFlags.Ephemeral });
-      } catch (error) {
-        console.error('Error replying with guild validation error:', error);
-      }
+    try {
+      await interaction.reply({ content: '❌ Solo puedes seleccionar canales del servidor actual.', flags: MessageFlags.Ephemeral });
+    } catch (error) {
+      console.error('Error replying with guild validation error:', error);
     }
     return;
   }
 
-  // Defer reply only if not already replied/deferred
+  // Defer reply
   let wasDeferred = false;
-  if (!interaction.deferred && !interaction.replied) {
-    try {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      wasDeferred = true;
-    } catch (error) {
-      // If already acknowledged, the interaction was already handled
-      if (error.code === 40060 || error.code === 10062) {
-        console.log('⚠️ Calendar channel_set interaction already acknowledged, skipping response');
-        return;
-      }
-      console.error('Error deferring calendar channel_set reply:', error);
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    wasDeferred = true;
+  } catch (error) {
+    // If already acknowledged, the interaction was already handled
+    if (error.code === 40060 || error.code === 10062) {
+      console.log('⚠️ Calendar channel_set interaction already acknowledged during defer, skipping response');
+      return;
     }
-  } else {
-    wasDeferred = interaction.deferred;
+    console.error('Error deferring calendar channel_set reply:', error);
+    // If defer fails for other reasons, try to continue without deferring
   }
 
   try {
@@ -4610,24 +4612,27 @@ async function handleCalendarChannelSet(interaction) {
 }
 
 async function handleCalendarChannelClear(interaction) {
+  // Check interaction state at the start
+  if (interaction.replied || interaction.deferred) {
+    console.log(`⚠️ Calendar channel_clear: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+    return;
+  }
+
   const guildId = interaction.guildId;
 
-  // Defer reply only if not already replied/deferred
+  // Defer reply
   let wasDeferred = false;
-  if (!interaction.deferred && !interaction.replied) {
-    try {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      wasDeferred = true;
-    } catch (error) {
-      // If already acknowledged, the interaction was already handled
-      if (error.code === 40060 || error.code === 10062) {
-        console.log('⚠️ Calendar channel_clear interaction already acknowledged, skipping response');
-        return;
-      }
-      console.error('Error deferring calendar channel_clear reply:', error);
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    wasDeferred = true;
+  } catch (error) {
+    // If already acknowledged, the interaction was already handled
+    if (error.code === 40060 || error.code === 10062) {
+      console.log('⚠️ Calendar channel_clear interaction already acknowledged during defer, skipping response');
+      return;
     }
-  } else {
-    wasDeferred = interaction.deferred;
+    console.error('Error deferring calendar channel_clear reply:', error);
+    // If defer fails for other reasons, try to continue without deferring
   }
 
   try {
@@ -4850,19 +4855,20 @@ function buildCalendarReminderEmbed(event) {
 }
 
 async function showCalendarMenu(interaction) {
-  let alreadyAcknowledged = interaction.deferred || interaction.replied;
+  // Check interaction state at the start
+  if (interaction.replied || interaction.deferred) {
+    console.log(`⚠️ showCalendarMenu: interaction already acknowledged (replied: ${interaction.replied}, deferred: ${interaction.deferred})`);
+    return;
+  }
 
-  if (!alreadyAcknowledged) {
-    try {
-      await interaction.deferReply({ ephemeral: true });
-      alreadyAcknowledged = true;
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   } catch (error) {
-      if (error.code === 40060 || error.code === 10062) {
-        alreadyAcknowledged = true;
-      } else {
-        throw error;
-      }
+    if (error.code === 40060 || error.code === 10062) {
+      console.log('⚠️ showCalendarMenu: interaction already acknowledged during defer, skipping response');
+      return;
     }
+    throw error;
   }
 
   const rangeKey = 'tresdias';
