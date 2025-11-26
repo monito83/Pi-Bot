@@ -1,6 +1,6 @@
 console.log('🔥 LOG 1: Starting to load modules...');
 console.log('🔥 ULTRA SIMPLE TEST v2: This code is definitely running!');
-const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, MessageFlags } = require('discord.js');
 console.log('🔥 LOG 2: Discord.js loaded');
 const { Pool } = require('pg');
 console.log('🔥 LOG 3: PostgreSQL loaded');
@@ -4371,11 +4371,15 @@ async function handleCalendarCommand(interaction) {
 
   const rangeKey = CALENDAR_RANGES[subcommand] ? subcommand : 'hoy';
 
-  try {
-    await interaction.deferReply({ ephemeral: true });
-  } catch (error) {
-    if (error.code !== 40060 && error.code !== 10062) {
-      throw error;
+  // Defer reply only if not already replied/deferred
+  if (!interaction.replied && !interaction.deferred) {
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } catch (error) {
+      // If already acknowledged, continue without deferring
+      if (error.code !== 40060 && error.code !== 10062) {
+        console.error('Error deferring calendar reply:', error);
+      }
     }
   }
 
@@ -4392,11 +4396,15 @@ async function handleCalendarButton(interaction) {
 
   if (customId.startsWith('calendar_show_')) {
     const rangeKey = customId.replace('calendar_show_', '');
-    try {
-      await interaction.deferReply({ ephemeral: true });
-    } catch (error) {
-      if (error.code !== 40060 && error.code !== 10062) {
-        throw error;
+    // Defer reply only if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      } catch (error) {
+        // If already acknowledged, continue without deferring
+        if (error.code !== 40060 && error.code !== 10062) {
+          console.error('Error deferring calendar button reply:', error);
+        }
       }
     }
     await respondCalendarRange(interaction, rangeKey);
@@ -4418,23 +4426,55 @@ async function respondCalendarRange(interaction, rangeKey) {
     const events = await getCalendarEvents(rangeConfig.range);
     const embed = buildCalendarEmbed(rangeKey, events);
 
-    if (interaction.deferred) {
+    // Check interaction state more carefully
+    if (interaction.deferred && !interaction.replied) {
       await interaction.editReply({ content: null, embeds: [embed], components: [] });
     } else if (interaction.replied) {
-      await interaction.followUp({ embeds: [embed], ephemeral: true });
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    } else if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } else {
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      // Fallback: try editReply if deferred, otherwise followUp
+      try {
+        await interaction.editReply({ content: null, embeds: [embed], components: [] });
+      } catch (editError) {
+        if (editError.code === 40060 || editError.code === 10062) {
+          await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        } else {
+          throw editError;
+        }
+      }
     }
   } catch (error) {
     console.error('Error obteniendo eventos del calendario:', error);
     const message = '❌ No se pudieron obtener los eventos. Verifica la configuración del calendario.';
 
-    if (interaction.deferred) {
-      await interaction.editReply({ content: message, embeds: [], components: [] });
+    // Check interaction state more carefully for error handling
+    if (interaction.deferred && !interaction.replied) {
+      try {
+        await interaction.editReply({ content: message, embeds: [], components: [] });
+      } catch (editError) {
+        console.error('Error editing reply with error message:', editError);
+      }
     } else if (interaction.replied) {
-      await interaction.followUp({ content: message, ephemeral: true });
+      try {
+        await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+      } catch (followUpError) {
+        console.error('Error following up with error message:', followUpError);
+      }
+    } else if (!interaction.replied && !interaction.deferred) {
+      try {
+        await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+      } catch (replyError) {
+        console.error('Error replying with error message:', replyError);
+      }
     } else {
-      await interaction.reply({ content: message, ephemeral: true });
+      // Last resort: try to send a follow-up
+      try {
+        await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+      } catch (finalError) {
+        console.error('Error sending final error message:', finalError);
+      }
     }
   }
 }
